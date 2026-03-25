@@ -1,6 +1,10 @@
 # dp1-go
 
-Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp11): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
+[![Test](https://github.com/display-protocol/dp1-go/actions/workflows/test.yaml/badge.svg)](https://github.com/display-protocol/dp1-go/actions/workflows/test.yaml?query=branch%3Amain)
+[![Lint](https://github.com/display-protocol/dp1-go/actions/workflows/lint.yaml/badge.svg)](https://github.com/display-protocol/dp1-go/actions/workflows/lint.yaml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/display-protocol/dp1-go/graph/badge.svg)](https://codecov.io/gh/display-protocol/dp1-go)
+
+Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
 
 **Module:** `github.com/display-protocol/dp1-go`
 
@@ -97,6 +101,8 @@ Normative JSON Schemas are embedded from the spec repo under `internal/schema/` 
 go test ./... -race -count=1
 bash scripts/check-coverage.sh 80   # merged module coverage threshold (CI)
 ```
+
+CI uploads the merged profile to [Codecov](https://codecov.io/gh/display-protocol/dp1-go) after the threshold check. If uploads require authentication, add a `CODECOV_TOKEN` repository secret from [codecov.io](https://codecov.io).
 
 ## License
 

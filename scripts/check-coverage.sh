@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# Usage: check-coverage.sh [threshold_percent] [merged_coverprofile_out]
+# Second argument, if set, writes the merged atomic coverprofile (e.g. for Codecov) on success.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 threshold="${1:-80}"
+outfile="${2:-}"
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 echo "mode: atomic" >"$tmp"
@@ -18,3 +21,6 @@ awk -v p="$pct" -v t="$threshold" 'BEGIN{exit !(p+0 >= t+0)}' || {
   exit 1
 }
 echo "total coverage: ${pct}% (threshold ${threshold}%)"
+if [[ -n "${outfile}" ]]; then
+  cp "$tmp" "${outfile}"
+fi
