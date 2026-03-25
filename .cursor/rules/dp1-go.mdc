@@ -1,0 +1,51 @@
+---
+description: DP-1 Go SDK — project contract and invariants (mirrors AGENTS.md)
+alwaysApply: true
+---
+
+# dp1-go
+
+Go SDK for [DP-1](https://github.com/display-protocol/dp1): playlists, playlist-groups, ref manifests, optional JSON Schema extensions, JCS (RFC 8785), payload hashing, Ed25519 (legacy + multi-sig), and `merge` display resolution. **Not** a full player, license server, or UI.
+
+**Normative source:** DP-1 spec and upstream schemas. Embedded copies under `internal/schema/` must stay aligned—update schemas, overlays, Go types, and tests in the **same change**.
+
+## Coding defaults and style
+
+- Simplest correct change; no silent failures; ship tests, schema updates, and README/docs with the feature.
+- Standard Go + package docs; comments for intent, trade-offs, invariants, failure modes—not filler.
+
+## Protocol and API invariants
+
+- **`ParseAndValidate*`:** validate raw JSON (embedded JSON Schema draft 2020-12), then `json.Unmarshal`—keep that order.
+- **Errors:** `ErrValidation` / `ErrSigInvalid` re-exported for `errors.Is` / `errors.As`. `CodedError` + `ErrorCode` align with DP-1 §14 where applicable; do not repurpose reserved §14 codes in `errors.go` for unrelated failures.
+- **§7.1 signing:** strip top-level `signature` / `signatures` → JCS → append single trailing LF → SHA-256; Ed25519 signs the **32-byte** digest. Changes here are **interop breaks**—lock with tests against spec wording.
+- **`merge`:** defaults → ref manifest controls → item `override` → item-local fields (last wins for same path).
+- **Test hooks:** `PlaylistCoreSchemaValidate` and other `*SchemaValidate` vars in `parse.go` are **tests only**; never reassign concurrently in production. In tests, save the original, assign stub, **`t.Cleanup`** restore; for decode-path tests, assert `errors.As` to `*CodedError` and expected `ErrorCode` (see `parse_test.go` patterns).
+
+## Repo rules
+
+- **Schemas:** `internal/schema/` (`core/`, `extensions/`, `overlay/`), embedded in `internal/schema/embed.go`. Each schema JSON needs correct `$id` matching `internal/validate` registration; add overlays when combining core + extension in one validation path.
+- **New document/extension:** schema → `validate` → root `ParseAndValidate*` → typed structs under `playlist` / `playlistgroup` / `refmanifest` / `extension/…`; add `ErrorCode` + `CodeFrom*Validation` when UI/telemetry needs a stable code.
+- **Signing:** keep canonicalization in `sign/` and JCS in `jcs/`—no duplicate pipelines in callers.
+- **Concurrency:** `jsonschema.Compiler.Compile` is not safe concurrent on one instance—`internal/validate` holds a mutex around compile; preserve when touching validation.
+- **Coverage:** `scripts/check-coverage.sh` merges packages and excludes embed-only `internal/schema`; do not drop merged coverage below CI without agreement.
+
+## Workflow and verification
+
+Short-lived branches; PRs cite DP-1 sections for spec changes; bump jsonschema/JCS/crypto with `go test ./... -race` + PR note if needed; keep `README.md` in sync with exports.
+
+Before done:
+
+```bash
+go test ./... -race -count=1
+golangci-lint run   # .golangci.yml
+bash scripts/check-coverage.sh 80
+```
+
+## Review gate
+
+DP-1-correct for touched surfaces; tests; schema JSON ↔ structs in sync (committed embeds); README/docs if API changed; local race tests, coverage script, lint clean.
+
+## Commits
+
+Imperative subject (~72 chars); body for spec refs/rationale; one logical concern per commit when possible.

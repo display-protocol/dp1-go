@@ -1,6 +1,6 @@
 # dp1-go
 
-Go SDK for the [DP-1 protocol](https://github.com/bitmark-inc/dp-1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
+Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
 
 **Module:** `github.com/display-protocol/dp1-go`
 
