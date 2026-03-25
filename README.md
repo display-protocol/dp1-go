@@ -1,6 +1,6 @@
 # dp1-go
 
-Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
+Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp11): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
 
 **Module:** `github.com/display-protocol/dp1-go`
 
@@ -16,16 +16,29 @@ go get github.com/display-protocol/dp1-go
 
 ## Usage
 
-Parse and validate in one step (embedded JSON Schema, draft 2020-12):
+### Parse and validate
+
+All entrypoints validate raw JSON against embedded JSON Schema (draft 2020-12), then decode into typed structs.
+
+| Function | Document |
+|----------|----------|
+| `ParseAndValidatePlaylist` | Core playlist |
+| `ParseAndValidatePlaylistWithPlaylistsExtension` | Core playlist + **playlists** extension overlay |
+| `ParseAndValidatePlaylistGroup` | Playlist-group (exhibition) |
+| `ParseAndValidateRefManifest` | Ref manifest |
+| `ParseAndValidateChannel` | **channels** extension document |
 
 ```go
 import "github.com/display-protocol/dp1-go"
 
 p, err := dp1.ParseAndValidatePlaylist(playlistJSON)
 if err != nil {
-    // errors.Is(err, dp1.ErrValidation) for schema failures
     return err
 }
+
+g, err := dp1.ParseAndValidatePlaylistGroup(groupJSON)
+m, err := dp1.ParseAndValidateRefManifest(manifestJSON)
+ch, err := dp1.ParseAndValidateChannel(channelJSON)
 ```
 
 Playlist with the optional **playlists** extension overlay:
@@ -34,13 +47,45 @@ Playlist with the optional **playlists** extension overlay:
 p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
 ```
 
-Signing helpers (`github.com/display-protocol/dp1-go/sign`):
+### Errors
 
-- `sign.PayloadHashString` / `sign.VerifyPayloadHash` — `sha256:<hex>` for `payload_hash` (DP-1 §7.1: JCS after strip, trailing LF, then SHA-256)
-- `sign.SignLegacyEd25519` / `sign.VerifyLegacyEd25519` — v1.0.x `signature: ed25519:<hex>` over that same digest
-- `sign.SignMultiEd25519` / `sign.VerifyMultiEd25519` — v1.1+ `signatures[]`: Ed25519 signs the same **32-byte** digest; `payload_hash` is checked separately for assertion (Ed25519 only for now)
+- `errors.Is(err, dp1.ErrValidation)` — JSON Schema validation failed (after mapping, playlist failures still wrap `ErrValidation`).
+- `errors.As` into `*dp1.CodedError` — stable `ErrorCode` for UI/telemetry (e.g. `dp1.CodePlaylistInvalid`; `dp1.CodeSigInvalid` is used by the `sign` package). Validation failures use codes such as `CodePlaylistInvalid`, `CodePlaylistGroupInvalid`, `CodeRefManifestInvalid`, `CodeChannelInvalid`.
 
-Display merge order (`github.com/display-protocol/dp1-go/merge`): defaults → ref manifest controls → item `override` → item-local display fields.
+```go
+var coded *dp1.CodedError
+if errors.As(err, &coded) {
+    _ = coded.Code
+}
+```
+
+### `dpVersion` (DP-1 §12)
+
+```go
+v, err := dp1.ParseDPVersion(p.DPVersion)
+if err != nil { /* ... */ }
+_ = dp1.WarnMajorMismatch(v, 1) // optional: warn if document major ≠ player major
+```
+
+### Signing (`github.com/display-protocol/dp1-go/sign`)
+
+- `sign.PayloadHashString` / `sign.VerifyPayloadHash` — `sha256:<hex>` for `payload_hash` (DP-1 §7.1: strip top-level signature fields, JCS, trailing LF, then SHA-256).
+- `sign.SignLegacyEd25519` / `sign.VerifyLegacyEd25519` — v1.0.x `signature: ed25519:<hex>` over that same digest.
+- `sign.SignMultiEd25519` / `sign.VerifyMultiEd25519` — v1.1+ `signatures[]`: Ed25519 signs the same **32-byte** digest; `payload_hash` is checked separately (`VerifyMultiEd25519` takes a `context.Context` and `sign.PublicKeyResolver` for `kid` → public key). Ed25519 only for now.
+
+### Display merge (`github.com/display-protocol/dp1-go/merge`)
+
+Resolution order: defaults → ref manifest controls → item `override` → item-local display fields.
+
+```go
+import "github.com/display-protocol/dp1-go/merge"
+
+prefs, err := merge.DisplayForItem(def, refManifest, item)
+```
+
+### Extension types (optional)
+
+Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay, `extension/identity` for `Entity`, `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
 
 ## Schemas
 
@@ -49,8 +94,8 @@ Normative JSON Schemas are embedded from the spec repo under `internal/schema/` 
 ## Testing
 
 ```bash
-go test ./... -race
-bash scripts/check-coverage.sh 80   # merged module coverage threshold
+go test ./... -race -count=1
+bash scripts/check-coverage.sh 80   # merged module coverage threshold (CI)
 ```
 
 ## License
