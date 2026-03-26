@@ -75,7 +75,9 @@ _ = dp1.WarnMajorMismatch(v, 1) // optional: warn if document major ≠ player m
 
 - `sign.PayloadHashString` / `sign.VerifyPayloadHash` — `sha256:<hex>` for `payload_hash` (DP-1 §7.1: strip top-level signature fields, JCS, trailing LF, then SHA-256).
 - `sign.SignLegacyEd25519` / `sign.VerifyLegacyEd25519` — v1.0.x `signature: ed25519:<hex>` over that same digest.
-- `sign.SignMultiEd25519` / `sign.VerifyMultiEd25519` — v1.1+ `signatures[]`: Ed25519 signs the same **32-byte** digest; `payload_hash` is checked separately (`VerifyMultiEd25519` takes a `context.Context` and `sign.PublicKeyResolver` for `kid` → public key). Ed25519 only for now.
+- `sign.Ed25519DIDKey` / `sign.Ed25519PublicKeyFromDIDKey` — encode and decode `did:key` for a raw Ed25519 public key (W3C did:key: multicodec ed25519-pub + multibase base58btc). `VerifyMultiEd25519` accepts only this `kid` form.
+- `sign.SignMultiEd25519` / `sign.VerifyMultiEd25519` — v1.1+ `signatures[]`: Ed25519 signs the same **32-byte** digest; `SignMultiEd25519` sets `kid` via `Ed25519DIDKey`; `payload_hash` is checked separately. Ed25519 only for now.
+- `sign.VerifyMultiSignaturesJSON` — decodes the top-level `signatures` array from raw JSON and verifies each entry (same rules as `VerifyMultiEd25519`); shared by playlist, playlist-group, and channel documents. `sign.VerifyPlaylistSignatures`, `sign.VerifyPlaylistGroupSignatures`, and `sign.VerifyChannelSignatures` are equivalent wrappers for clarity. Returns an error if JSON is invalid, `signatures` is missing or empty (`ErrNoSignatures`), or a signature entry cannot decode; otherwise ok plus failed `playlist.Signature` values (in order). Non-Ed25519 algorithms count as failures.
 
 ### Display merge (`github.com/display-protocol/dp1-go/merge`)
 

@@ -13,6 +13,7 @@ var (
 	ErrValidation     = validate.ErrValidation
 	ErrSigInvalid     = sign.ErrSigInvalid
 	ErrUnsupportedAlg = sign.ErrUnsupportedAlg
+	ErrNoSignatures   = sign.ErrNoSignatures
 )
 
 // ErrorCode is a stable string for DP-1 §14 (player → UI) mapping where applicable,

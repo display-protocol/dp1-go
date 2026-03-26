@@ -16,8 +16,6 @@ import (
 	"github.com/display-protocol/dp1-go/sign"
 )
 
-const testDIDKey = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
-
 // --- ParseAndValidate: playlists ---
 
 func TestParseAndValidatePlaylist_legacySigned(t *testing.T) {
@@ -64,7 +62,7 @@ func TestParseAndValidatePlaylist_multiSigned(t *testing.T) {
 		Items:     []playlist.PlaylistItem{{Source: "https://a"}},
 	}
 	body, _ := json.Marshal(pl)
-	sig, err := sign.SignMultiEd25519(body, priv, testDIDKey, playlist.RoleCurator, "2025-06-01T12:00:00Z")
+	sig, err := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2025-06-01T12:00:00Z")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,17 +110,21 @@ func assertValidationErrorChain(t *testing.T, err error) {
 func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	t.Parallel()
 	_, priv, _ := ed25519.GenerateKey(nil)
+	kid, err := sign.Ed25519DIDKey(priv.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
 	pl := playlist.Playlist{
 		DPVersion: "1.1.0",
 		Title:     "Ext",
 		Items:     []playlist.PlaylistItem{{Source: "https://a"}},
 		Summary:   "A curated feed",
 		Curators: []identity.Entity{
-			{Name: "Alice", Key: testDIDKey},
+			{Name: "Alice", Key: kid},
 		},
 	}
 	body, _ := json.Marshal(pl)
-	sig, _ := sign.SignMultiEd25519(body, priv, testDIDKey, playlist.RoleCurator, "2025-06-01T12:00:00Z")
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2025-06-01T12:00:00Z")
 	pl.Signatures = []playlist.Signature{sig}
 	signed, _ := json.Marshal(pl)
 	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed)
@@ -146,7 +148,7 @@ func TestParseAndValidatePlaylistGroup(t *testing.T) {
 		Created:   "2025-06-01T12:00:00Z",
 	}
 	body, _ := json.Marshal(g)
-	sig, _ := sign.SignMultiEd25519(body, priv, testDIDKey, playlist.RoleCurator, "2025-06-01T12:00:00Z")
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2025-06-01T12:00:00Z")
 	g.Signatures = []playlist.Signature{sig}
 	signed, _ := json.Marshal(g)
 	out, err := dp1.ParseAndValidatePlaylistGroup(signed)
@@ -197,7 +199,7 @@ func TestParseAndValidateChannel(t *testing.T) {
 		Playlists: []string{"https://feed.example/p.json"},
 	}
 	body, _ := json.Marshal(ch)
-	sig, _ := sign.SignMultiEd25519(body, priv, testDIDKey, playlist.RoleFeed, "2025-06-01T12:00:00Z")
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleFeed, "2025-06-01T12:00:00Z")
 	ch.Signatures = []playlist.Signature{sig}
 	signed, _ := json.Marshal(ch)
 	out, err := dp1.ParseAndValidateChannel(signed)

@@ -8,5 +8,8 @@ Legacy v1.0.x uses the same digest pipeline, with the signature embedded as ed25
 
 Additional algorithms (eip191, ecdsa-secp256k1, ecdsa-p256) are not implemented yet; VerifyMultiEd25519 returns
 ErrUnsupportedAlg for non-ed25519 alg values until those are added.
+
+For v1.1+ multi-sig, SignMultiEd25519 sets kid to the W3C did:key form (Ed25519DIDKey); VerifyMultiEd25519 parses kid with Ed25519PublicKeyFromDIDKey and rejects other DID methods or encodings.
+VerifyMultiSignaturesJSON reads signatures from raw JSON (same shape for playlist, playlist-group, channel); VerifyPlaylistSignatures, VerifyPlaylistGroupSignatures, and VerifyChannelSignatures are equivalent wrappers for call-site clarity.
 */
 package sign
