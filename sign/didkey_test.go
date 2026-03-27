@@ -3,7 +3,7 @@ package sign
 import (
 	"bytes"
 	"crypto/ed25519"
-	"errors"
+	"strings"
 	"testing"
 
 	mb "github.com/multiformats/go-multibase"
@@ -116,7 +116,7 @@ func TestEd25519PublicKeyFromDIDKey_prefixCaseInsensitive(t *testing.T) {
 func TestEd25519PublicKeyFromDIDKey_rejectsNonDidKey(t *testing.T) {
 	t.Parallel()
 	_, err := Ed25519PublicKeyFromDIDKey("did:web:example.com")
-	if err == nil || !errors.Is(err, ErrSigInvalid) {
+	if err == nil || !strings.Contains(err.Error(), "did:key") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestEd25519PublicKeyFromDIDKey_rejectsWrongMulticodec(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Ed25519PublicKeyFromDIDKey(didKeyPrefix + enc)
-	if err == nil || !errors.Is(err, ErrSigInvalid) {
+	if err == nil || !strings.Contains(err.Error(), "ed25519-pub") {
 		t.Fatalf("err = %v", err)
 	}
 }

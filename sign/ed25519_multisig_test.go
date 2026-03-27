@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/display-protocol/dp1-go/playlist"
@@ -74,7 +75,10 @@ func TestVerifyMultiEd25519_kidNotDidKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-did:key kid")
 	}
-	if !errors.Is(err, ErrSigInvalid) {
+	if errors.Is(err, ErrSigInvalid) {
+		t.Fatalf("kid parse error must not be ErrSigInvalid; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "did:key") {
 		t.Fatalf("err = %v", err)
 	}
 }

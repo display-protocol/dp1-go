@@ -78,8 +78,8 @@ func TestVerifyPayloadHash_mismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mismatch")
 	}
-	if !errors.Is(err, ErrSigInvalid) {
-		t.Fatalf("expected ErrSigInvalid, got %v", err)
+	if !strings.Contains(err.Error(), "payload_hash") {
+		t.Fatalf("expected payload_hash mismatch error, got %v", err)
 	}
 }
 
@@ -95,8 +95,8 @@ func TestVerifyPayloadHash_wrongPrefixStillMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mismatch")
 	}
-	if !errors.Is(err, ErrSigInvalid) {
-		t.Fatalf("expected ErrSigInvalid, got %v", err)
+	if !strings.Contains(err.Error(), "payload_hash") {
+		t.Fatalf("expected payload_hash mismatch error, got %v", err)
 	}
 }
 

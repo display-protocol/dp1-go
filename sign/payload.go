@@ -66,13 +66,14 @@ func PayloadHashString(raw []byte) (string, error) {
 }
 
 // VerifyPayloadHash checks that wantHash equals PayloadHashString(raw).
+// A mismatch is returned as a plain error; that sentinel is for Ed25519 verify failure.
 func VerifyPayloadHash(raw []byte, wantHash string) error {
 	got, err := PayloadHashString(raw)
 	if err != nil {
 		return err
 	}
 	if got != wantHash {
-		return fmt.Errorf("%w: payload_hash mismatch", ErrSigInvalid)
+		return fmt.Errorf("payload_hash does not match canonical document digest")
 	}
 	return nil
 }
