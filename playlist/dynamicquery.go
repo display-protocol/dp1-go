@@ -45,18 +45,15 @@ var (
 
 var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 
-// ResolveDynamicQuery performs one dynamic fetch when p.DynamicQuery is set, appends decoded
-// playlist items after existing static items, and returns a new Playlist. The receiver is not modified.
+// ResolveDynamicQuery resolves the playlists extension dynamicQuery on p, when present.
+// It calls [PlaylistItemsFromDynamicQuery] with p.DynamicQuery and appends the returned items
+// after any existing static items. The receiver is not modified; a new [Playlist] value is returned.
 //
-// If DynamicQuery is nil, returns a copy of p with no network I/O.
+// If p.DynamicQuery is nil, returns a clone of p with no network I/O. If p is nil, returns an
+// error wrapping [ErrDynamicQueryRequest].
 //
-// When DynamicQuery.query is empty, no template hydration runs; the endpoint is still called
-// (GraphQL uses POST with "query": ""; https-json GET uses the bare endpoint URL; POST uses an empty body).
-//
-// params keys must cover every {{name}} in query when query is non-empty; otherwise hydration fails with
-// ErrDynamicQueryHydration. Extra keys in params are ignored.
-//
-// client may be nil to use http.DefaultClient. ctx is attached to the outgoing request.
+// Hydration rules, HTTP behavior, and errors are the same as [PlaylistItemsFromDynamicQuery]
+// with dq set to p.DynamicQuery.
 func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationParams, client *http.Client) (*Playlist, error) {
 	if p == nil {
 		return nil, fmt.Errorf("%w: nil playlist", ErrDynamicQueryRequest)
@@ -65,15 +62,55 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 	if p.DynamicQuery == nil {
 		return out, nil
 	}
-	if client == nil {
-		client = http.DefaultClient
-	}
 
-	hq, err := hydrateDynamicQueryString(p.DynamicQuery.Query, params)
+	dynamicItems, err := PlaylistItemsFromDynamicQuery(ctx, p.DynamicQuery, params, client)
 	if err != nil {
 		return nil, err
 	}
-	req, err := buildDynamicQueryRequest(ctx, p.DynamicQuery, hq)
+
+	merged := make([]PlaylistItem, 0, len(out.Items)+len(dynamicItems))
+	merged = append(merged, out.Items...)
+	merged = append(merged, dynamicItems...)
+	out.Items = merged
+	return out, nil
+}
+
+// PlaylistItemsFromDynamicQuery fetches and decodes dynamic playlist items from an indexer
+// according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
+// in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
+// (itemsPath, itemMap) to obtain objects, validates each against the core playlist item schema,
+// and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this
+// function when p.DynamicQuery is non-nil.
+//
+// dq must be non-nil. ctx is attached to the outgoing request. client may be nil to use
+// [http.DefaultClient].
+//
+// When dq.Query is empty, no template hydration runs; the endpoint is still called (GraphQL
+// POST sends an empty query string; https-json GET uses the bare endpoint URL; https-json POST
+// may send an empty body).
+//
+// When dq.Query is non-empty, params must supply every placeholder name it uses; otherwise
+// hydration fails with [ErrDynamicQueryHydration]. Extra keys in params are ignored.
+func PlaylistItemsFromDynamicQuery(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client) ([]PlaylistItem, error) {
+	if dq == nil {
+		return nil, fmt.Errorf("%w: nil dynamicQuery", ErrDynamicQueryRequest)
+	}
+	body, err := fetchDynamicQueryResponseBody(ctx, dq, params, client)
+	if err != nil {
+		return nil, err
+	}
+	return playlistItemsFromDynamicQueryBody(body, dq)
+}
+
+func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client) ([]byte, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	hq, err := hydrateDynamicQueryString(dq.Query, params)
+	if err != nil {
+		return nil, err
+	}
+	req, err := buildDynamicQueryRequest(ctx, dq, hq)
 	if err != nil {
 		return nil, err
 	}
@@ -89,16 +126,27 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%w: status %s", ErrDynamicQueryHTTP, resp.Status)
 	}
+	return body, nil
+}
 
-	rawItems, err := extractDynamicItems(body, p.DynamicQuery.Profile, p.DynamicQuery.ResponseMapping)
+func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) ([]PlaylistItem, error) {
+	if dq == nil {
+		return nil, fmt.Errorf("%w: nil dynamicQuery", ErrDynamicQueryRequest)
+	}
+	switch dq.Profile {
+	case ProfileHTTPSJSONV1, ProfileGraphQLV1:
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrDynamicQueryUnknownProfile, dq.Profile)
+	}
+
+	rawItems, err := extractDynamicItems(body, dq.Profile, dq.ResponseMapping)
 	if err != nil {
 		return nil, err
 	}
 
-	merged := make([]PlaylistItem, 0, len(out.Items)+len(rawItems))
-	merged = append(merged, out.Items...)
+	out := make([]PlaylistItem, 0, len(rawItems))
 	for _, raw := range rawItems {
-		itemJSON, err := applyItemMap(raw, p.DynamicQuery.ResponseMapping.ItemMap)
+		itemJSON, err := applyItemMap(raw, dq.ResponseMapping.ItemMap)
 		if err != nil {
 			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
 		}
@@ -109,9 +157,8 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 		if err := json.Unmarshal(itemJSON, &it); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
-		merged = append(merged, it)
+		out = append(out, it)
 	}
-	out.Items = merged
 	return out, nil
 }
 

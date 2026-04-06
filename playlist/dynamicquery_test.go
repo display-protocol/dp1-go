@@ -45,6 +45,43 @@ func TestHydrateDynamicQueryString(t *testing.T) {
 	}
 }
 
+func TestPlaylistItemsFromDynamicQuery(t *testing.T) {
+	t.Parallel()
+	_, err := PlaylistItemsFromDynamicQuery(context.Background(), nil, nil, nil)
+	if err == nil || !errors.Is(err, ErrDynamicQueryRequest) {
+		t.Fatalf("nil dq: got %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method %s", r.Method)
+		}
+		if r.URL.RawQuery != "chain=ethereum&owner=0xabc" {
+			t.Errorf("query %q", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"artworks":[{"id":"385f79b6-a45f-4c1c-8080-e93a192adccc","title":"T","source":"https://media.example/x"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	dq := &playlists.DynamicQuery{
+		Profile:  ProfileHTTPSJSONV1,
+		Endpoint: srv.URL + "/artworks",
+		Method:   http.MethodGet,
+		Query:    "chain=ethereum&owner={{owner}}",
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "artworks",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	items, err := PlaylistItemsFromDynamicQuery(context.Background(), dq, HydrationParams{"owner": "0xabc"}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Title != "T" || items[0].Source != "https://media.example/x" {
+		t.Fatalf("%+v", items)
+	}
+}
+
 func TestResolveDynamicQuery_nilExtension(t *testing.T) {
 	t.Parallel()
 	p := &Playlist{
