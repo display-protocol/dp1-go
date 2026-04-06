@@ -219,6 +219,61 @@ func TestResolveDynamicQuery_itemMap(t *testing.T) {
 	}
 }
 
+func TestResolveDynamicQuery_itemMap_itemsPathDotNotation(t *testing.T) {
+	t.Parallel()
+	// Nested envelope: items live at response.payload.entries; itemMap still maps top-level keys on each row object.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+  "response": {
+    "payload": {
+      "meta": { "version": 1 },
+      "entries": [
+        {
+          "artwork_id": "385f79b6-a45f-4c1c-8080-e93a192adccc",
+          "name": "Nested",
+          "media_url": "https://media.example/nested"
+        }
+      ]
+    }
+  }
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://static.example/a"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "response.payload.entries",
+				ItemSchema: "dp1/1.1",
+				ItemMap: map[string]string{
+					"id":     "artwork_id",
+					"title":  "name",
+					"source": "media_url",
+				},
+			},
+		},
+	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 2 {
+		t.Fatalf("want 2 items, got %d %+v", len(out.Items), out.Items)
+	}
+	it := out.Items[1]
+	if it.Title != "Nested" || it.Source != "https://media.example/nested" {
+		t.Fatalf("got %+v", it)
+	}
+	if it.ID != "385f79b6-a45f-4c1c-8080-e93a192adccc" {
+		t.Fatalf("id %+v", it.ID)
+	}
+}
+
 func TestResolveDynamicQuery_graphQL_errors(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
