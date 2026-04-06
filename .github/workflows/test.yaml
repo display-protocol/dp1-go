@@ -15,9 +15,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Test with race detector
-        run: go test ./... -race -count=1
-      - name: Merged coverage (>= 80%)
+      - name: Test (race) + merged coverage (>= 80%)
         run: bash scripts/check-coverage.sh 80 coverage.out
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

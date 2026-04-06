@@ -10,7 +10,8 @@ trap 'rm -f "$tmp"' EXIT
 echo "mode: atomic" >"$tmp"
 while read -r pkg; do
   f=$(mktemp)
-  go test "$pkg" -coverprofile="$f" -covermode=atomic >/dev/null
+  # Match CI: race detector + atomic coverprofile per package (merged below).
+  go test "$pkg" -race -count=1 -coverprofile="$f" -covermode=atomic >/dev/null
   tail -n +2 "$f" >>"$tmp"
   rm -f "$f"
 done < <(go list ./... | grep -v '/internal/schema$')
