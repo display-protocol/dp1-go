@@ -15,6 +15,7 @@ import (
 
 const (
 	playlistSchemaURL                 = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
+	playlistItemSchemaURL             = playlistSchemaURL + "#/$defs/PlaylistItem"
 	playlistGroupSchemaURL            = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
 	refManifestSchemaURL              = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
 	channelsExtensionSchemaURL        = "https://dp1.feralfile.com/extensions/channels/v0.1.0/schema.json"
@@ -98,6 +99,14 @@ func validateAgainst(url string, data []byte) error {
 // Playlist validates a DP-1 playlist JSON document (core schema only).
 func Playlist(data []byte) error {
 	return validateAgainst(playlistSchemaURL, data)
+}
+
+// PlaylistItem validates raw JSON for a single playlist item against the core
+// schema's PlaylistItem definition (v1.1.0). Callers use itemSchema from
+// dynamic query responseMapping to select validator version in future minors;
+// today all supported dp1/x.y itemSchema values are validated with this definition.
+func PlaylistItem(data []byte) error {
+	return validateAgainst(playlistItemSchemaURL, data)
 }
 
 // PlaylistWithPlaylistsExtension validates a playlist JSON document that may include

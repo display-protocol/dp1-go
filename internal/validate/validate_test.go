@@ -301,6 +301,14 @@ func TestValidate_concurrentPlaylist(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPlaylistItem_OK_and_invalid(t *testing.T) {
+	t.Parallel()
+	if err := PlaylistItem([]byte(`{"source":"https://example.com/a"}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertErrValidation(t, PlaylistItem([]byte(`{}`)))
+}
+
 func assertErrValidation(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {

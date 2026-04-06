@@ -51,6 +51,8 @@ Playlist with the optional **playlists** extension overlay:
 p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
 ```
 
+Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item against core `PlaylistItem`, and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`).
+
 ### Errors
 
 - `errors.Is(err, dp1.ErrValidation)` — JSON Schema validation failed (after mapping, playlist failures still wrap `ErrValidation`).
