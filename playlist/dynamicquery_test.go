@@ -30,6 +30,29 @@ func (errReadCloser) Close() error               { return nil }
 // testDynamicQueryInsecure opts into HTTP and non-public hosts for httptest servers.
 var testDynamicQueryInsecure = &DynamicQueryFetchOptions{AllowInsecureHTTP: true}
 
+func assertErrDynamicQueryEndpointPolicy(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
+		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	}
+}
+
+func playlistWithDynamicEndpoint(profile, endpoint string) *Playlist {
+	return &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://s"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  profile,
+			Endpoint: endpoint,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "x",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+}
+
 func TestHydrateDynamicQueryString(t *testing.T) {
 	t.Parallel()
 	got, err := HydrateDynamicQueryString(`owner={{a}}&x={{b}}`, HydrationParams{"a": "1", "b": "2"})
@@ -570,89 +593,107 @@ func TestBuildDynamicQueryRequest_nilDynamicQuery(t *testing.T) {
 	}
 }
 
-func TestResolveDynamicQuery_endpointPolicy_httpRequiresOptIn(t *testing.T) {
+func TestResolveDynamicQuery_endpointPolicy(t *testing.T) {
 	t.Parallel()
-	p := &Playlist{
-		DPVersion: "1.1.0",
-		Title:     "t",
-		Items:     []PlaylistItem{{Source: "https://s"}},
-		DynamicQuery: &playlists.DynamicQuery{
-			Profile:  ProfileHTTPSJSONV1,
-			Endpoint: "http://example.com/feed",
-			ResponseMapping: playlists.ResponseMapping{
-				ItemsPath:  "x",
-				ItemSchema: "dp1/1.1",
-			},
-		},
+	cases := []struct {
+		name     string
+		profile  string
+		endpoint string
+	}{
+		{name: "http_requires_https_or_insecure_opt", profile: ProfileHTTPSJSONV1, endpoint: "http://example.com/feed"},
+		{name: "https_private_ip_literal", profile: ProfileHTTPSJSONV1, endpoint: "https://192.168.0.1/api"},
+		{name: "userinfo_rejected", profile: ProfileHTTPSJSONV1, endpoint: "https://user:pass@example.com/x"},
+		{name: "loopback_ipv6_graphql", profile: ProfileGraphQLV1, endpoint: "https://[::1]/graphql"},
+		{name: "fragment_rejected", profile: ProfileHTTPSJSONV1, endpoint: "https://example.com/api#frag"},
+		{name: "unsupported_scheme_wss", profile: ProfileHTTPSJSONV1, endpoint: "wss://example.com/graphql"},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
-	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
-		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := playlistWithDynamicEndpoint(tc.profile, tc.endpoint)
+			_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
+			assertErrDynamicQueryEndpointPolicy(t, err)
+		})
 	}
 }
 
-func TestResolveDynamicQuery_endpointPolicy_httpsPrivateIPBlocked(t *testing.T) {
+func TestValidateDynamicQueryRequestURL(t *testing.T) {
 	t.Parallel()
-	p := &Playlist{
-		DPVersion: "1.1.0",
-		Title:     "t",
-		Items:     []PlaylistItem{{Source: "https://s"}},
-		DynamicQuery: &playlists.DynamicQuery{
-			Profile:  ProfileHTTPSJSONV1,
-			Endpoint: "https://192.168.0.1/api",
-			ResponseMapping: playlists.ResponseMapping{
-				ItemsPath:  "x",
-				ItemSchema: "dp1/1.1",
-			},
-		},
-	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
-	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
-		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
-	}
-}
 
-func TestResolveDynamicQuery_endpointPolicy_userInfoRejected(t *testing.T) {
-	t.Parallel()
-	p := &Playlist{
-		DPVersion: "1.1.0",
-		Title:     "t",
-		Items:     []PlaylistItem{{Source: "https://s"}},
-		DynamicQuery: &playlists.DynamicQuery{
-			Profile:  ProfileHTTPSJSONV1,
-			Endpoint: "https://user:pass@example.com/x",
-			ResponseMapping: playlists.ResponseMapping{
-				ItemsPath:  "x",
-				ItemSchema: "dp1/1.1",
-			},
-		},
-	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
-	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
-		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
-	}
-}
+	t.Run("nil_opts_same_as_explicit_zero", func(t *testing.T) {
+		t.Parallel()
+		u, err := url.Parse("http://127.0.0.1/x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		errNil := validateDynamicQueryRequestURL(context.Background(), u, nil)
+		errZero := validateDynamicQueryRequestURL(context.Background(), u, &DynamicQueryFetchOptions{})
+		assertErrDynamicQueryEndpointPolicy(t, errNil)
+		assertErrDynamicQueryEndpointPolicy(t, errZero)
+	})
 
-func TestValidateDynamicQueryRequestURL_insecureAllowsLoopbackHTTPS(t *testing.T) {
-	t.Parallel()
-	u, err := url.Parse("https://127.0.0.1/x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateDynamicQueryRequestURL(context.Background(), u, testDynamicQueryInsecure); err != nil {
-		t.Fatal(err)
-	}
-}
+	t.Run("nil_request_url", func(t *testing.T) {
+		t.Parallel()
+		err := validateDynamicQueryRequestURL(context.Background(), nil, nil)
+		assertErrDynamicQueryEndpointPolicy(t, err)
+	})
 
-func TestValidateDynamicQueryRequestURL_productionBlocksLoopback(t *testing.T) {
-	t.Parallel()
-	u, err := url.Parse("https://127.0.0.1/x")
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name    string
+		rawURL  string
+		url     *url.URL // if non-nil, used instead of parsing rawURL
+		opts    *DynamicQueryFetchOptions
+		wantErr bool
+	}{
+		{name: "relative_path_only", rawURL: "/only/path", opts: nil, wantErr: true},
+		{name: "relative_no_scheme", rawURL: "//example.com/x", opts: nil, wantErr: true},
+		{name: "https_empty_authority", rawURL: "https:///nohost", opts: nil, wantErr: true},
+		{name: "fragment", rawURL: "https://example.com/path#frag", opts: nil, wantErr: true},
+		{name: "ftp_scheme", rawURL: "ftp://example.com/pub", opts: nil, wantErr: true},
+		{name: "file_scheme", rawURL: "file:///etc/passwd", opts: nil, wantErr: true},
+		{name: "ws_scheme", rawURL: "ws://example.com/", opts: nil, wantErr: true},
+		{name: "http_without_opt_in", rawURL: "http://1.1.1.1/x", opts: nil, wantErr: true},
+		{name: "http_with_opt_in", rawURL: "http://1.1.1.1/x", opts: testDynamicQueryInsecure, wantErr: false},
+		{name: "https_public_ipv4", rawURL: "https://1.1.1.1/x", opts: nil, wantErr: false},
+		{name: "https_public_ipv4_with_port", rawURL: "https://1.1.1.1:443/x", opts: nil, wantErr: false},
+		{name: "https_loopback_ipv4", rawURL: "https://127.0.0.1/x", opts: nil, wantErr: true},
+		{name: "https_loopback_ipv4_with_insecure_opt", rawURL: "https://127.0.0.1/x", opts: testDynamicQueryInsecure, wantErr: false},
+		{name: "https_rfc1918_10", rawURL: "https://10.0.0.1/x", opts: nil, wantErr: true},
+		{name: "https_rfc1918_172", rawURL: "https://172.20.0.1/x", opts: nil, wantErr: true},
+		{name: "https_link_local_169", rawURL: "https://169.254.1.1/x", opts: nil, wantErr: true},
+		{name: "https_unspecified", rawURL: "https://0.0.0.0/x", opts: nil, wantErr: true},
+		{name: "https_multicast_v4", rawURL: "https://224.0.0.1/x", opts: nil, wantErr: true},
+		{name: "https_loopback_ipv6", rawURL: "https://[::1]/x", opts: nil, wantErr: true},
+		{name: "https_ipv4_mapped_loopback", rawURL: "https://[::ffff:127.0.0.1]/x", opts: nil, wantErr: true},
+		{name: "https_link_local_ipv6", rawURL: "https://[fe80::1]/x", opts: nil, wantErr: true},
+		{name: "https_ula_ipv6", rawURL: "https://[fc00::1]/x", opts: nil, wantErr: true},
+		{name: "userinfo_user_only", rawURL: "https://user@1.1.1.1/x", opts: nil, wantErr: true},
+		{name: "scheme_path_without_host", rawURL: "", url: &url.URL{Scheme: "https", Path: "/x"}, opts: nil, wantErr: true},
+		{name: "https_localhost_resolves_loopback", rawURL: "https://localhost/x", opts: nil, wantErr: true},
+		{name: "http_localhost_with_insecure_opt", rawURL: "http://localhost/x", opts: testDynamicQueryInsecure, wantErr: false},
 	}
-	err = validateDynamicQueryRequestURL(context.Background(), u, nil)
-	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
-		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var u *url.URL
+			var err error
+			if tc.url != nil {
+				u = tc.url
+			} else {
+				u, err = url.Parse(tc.rawURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = validateDynamicQueryRequestURL(context.Background(), u, tc.opts)
+			if tc.wantErr {
+				assertErrDynamicQueryEndpointPolicy(t, err)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
