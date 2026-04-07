@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -25,6 +26,9 @@ type errReadCloser struct{}
 
 func (errReadCloser) Read(p []byte) (int, error) { return 0, errors.New("read body") }
 func (errReadCloser) Close() error               { return nil }
+
+// testDynamicQueryInsecure opts into HTTP and non-public hosts for httptest servers.
+var testDynamicQueryInsecure = &DynamicQueryFetchOptions{AllowInsecureHTTP: true}
 
 func TestHydrateDynamicQueryString(t *testing.T) {
 	t.Parallel()
@@ -47,7 +51,7 @@ func TestHydrateDynamicQueryString(t *testing.T) {
 
 func TestPlaylistItemsFromDynamicQuery(t *testing.T) {
 	t.Parallel()
-	_, err := PlaylistItemsFromDynamicQuery(context.Background(), nil, nil, nil)
+	_, err := PlaylistItemsFromDynamicQuery(context.Background(), nil, nil, nil, nil)
 	if err == nil || !errors.Is(err, ErrDynamicQueryRequest) {
 		t.Fatalf("nil dq: got %v", err)
 	}
@@ -73,7 +77,7 @@ func TestPlaylistItemsFromDynamicQuery(t *testing.T) {
 			ItemSchema: "dp1/1.1",
 		},
 	}
-	items, err := PlaylistItemsFromDynamicQuery(context.Background(), dq, HydrationParams{"owner": "0xabc"}, srv.Client())
+	items, err := PlaylistItemsFromDynamicQuery(context.Background(), dq, HydrationParams{"owner": "0xabc"}, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +95,7 @@ func TestResolveDynamicQuery_nilExtension(t *testing.T) {
 			{Source: "https://static.example/a"},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), nil, nil)
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +135,7 @@ func TestResolveDynamicQuery_httpsJSONGET(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"owner": "0xabc"}, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"owner": "0xabc"}, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +174,7 @@ func TestResolveDynamicQuery_httpsJSONGET_noQueryString(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"unused": "x"}, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"unused": "x"}, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +217,7 @@ func TestResolveDynamicQuery_graphQL(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"addr": "0xw"}, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"addr": "0xw"}, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +251,7 @@ func TestResolveDynamicQuery_itemMap(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +299,7 @@ func TestResolveDynamicQuery_itemMap_itemsPathDotNotation(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +336,7 @@ func TestResolveDynamicQuery_graphQL_errors(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if err == nil || !errors.Is(err, ErrDynamicQueryResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -361,7 +365,7 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
 			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
 		}
@@ -390,7 +394,7 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
 			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
 		}
@@ -423,7 +427,7 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
 			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
 		}
@@ -435,7 +439,7 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 
 func TestResolveDynamicQuery_nilPlaylist(t *testing.T) {
 	t.Parallel()
-	_, err := (*Playlist)(nil).ResolveDynamicQuery(context.Background(), nil, http.DefaultClient)
+	_, err := (*Playlist)(nil).ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
 	if err == nil || !errors.Is(err, ErrDynamicQueryRequest) {
 		t.Fatalf("got %v", err)
 	}
@@ -459,7 +463,7 @@ func TestResolveDynamicQuery_httpDoError(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("transport boom")
 	})}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, client)
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, client, testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryHTTP) {
 		t.Fatalf("got %v", err)
 	}
@@ -486,7 +490,7 @@ func TestResolveDynamicQuery_readBodyError(t *testing.T) {
 			Body:       errReadCloser{},
 		}, nil
 	})}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, client)
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, client, testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryHTTP) || !strings.Contains(err.Error(), "read body") {
 		t.Fatalf("got %v", err)
 	}
@@ -512,7 +516,7 @@ func TestResolveDynamicQuery_httpNotSuccess(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryHTTP) {
 		t.Fatalf("got %v", err)
 	}
@@ -533,7 +537,7 @@ func TestResolveDynamicQuery_unknownProfile(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient)
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
 	if !errors.Is(err, ErrDynamicQueryUnknownProfile) {
 		t.Fatalf("got %v", err)
 	}
@@ -566,6 +570,92 @@ func TestBuildDynamicQueryRequest_nilDynamicQuery(t *testing.T) {
 	}
 }
 
+func TestResolveDynamicQuery_endpointPolicy_httpRequiresOptIn(t *testing.T) {
+	t.Parallel()
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://s"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: "http://example.com/feed",
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "x",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
+	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
+		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	}
+}
+
+func TestResolveDynamicQuery_endpointPolicy_httpsPrivateIPBlocked(t *testing.T) {
+	t.Parallel()
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://s"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: "https://192.168.0.1/api",
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "x",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
+	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
+		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	}
+}
+
+func TestResolveDynamicQuery_endpointPolicy_userInfoRejected(t *testing.T) {
+	t.Parallel()
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://s"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: "https://user:pass@example.com/x",
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "x",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, http.DefaultClient, nil)
+	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
+		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	}
+}
+
+func TestValidateDynamicQueryRequestURL_insecureAllowsLoopbackHTTPS(t *testing.T) {
+	t.Parallel()
+	u, err := url.Parse("https://127.0.0.1/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDynamicQueryRequestURL(context.Background(), u, testDynamicQueryInsecure); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateDynamicQueryRequestURL_productionBlocksLoopback(t *testing.T) {
+	t.Parallel()
+	u, err := url.Parse("https://127.0.0.1/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateDynamicQueryRequestURL(context.Background(), u, nil)
+	if err == nil || !errors.Is(err, ErrDynamicQueryEndpointPolicy) {
+		t.Fatalf("want ErrDynamicQueryEndpointPolicy, got %v", err)
+	}
+}
+
 func TestResolveDynamicQuery_invalidJSONBody(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +676,7 @@ func TestResolveDynamicQuery_invalidJSONBody(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -612,7 +702,7 @@ func TestResolveDynamicQuery_itemsPathNotArray(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -638,7 +728,7 @@ func TestResolveDynamicQuery_itemsPathWrongType(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -665,7 +755,7 @@ func TestResolveDynamicQuery_graphQLEmptyErrorMessage(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryResponse) || !strings.Contains(err.Error(), "graphql error") {
 		t.Fatalf("got %v", err)
 	}
@@ -692,7 +782,7 @@ func TestResolveDynamicQuery_graphQLInvalidJSON(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryResponse) {
 		t.Fatalf("got %v", err)
 	}
@@ -721,7 +811,7 @@ func TestResolveDynamicQuery_itemMapNonObjectElement(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
 		t.Fatalf("got %v", err)
 	}
@@ -749,7 +839,7 @@ func TestResolveDynamicQuery_jsonUnmarshalItemFails(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
 		t.Fatalf("got %v", err)
 	}
@@ -794,7 +884,7 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 			},
 		},
 	}
-	out, err := orig.ResolveDynamicQuery(context.Background(), nil, srv.Client())
+	out, err := orig.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -852,7 +942,7 @@ func TestResolveDynamicQuery_httpsJSONPost(t *testing.T) {
 			},
 		},
 	}
-	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"f": "a"}, srv.Client())
+	out, err := p.ResolveDynamicQuery(context.Background(), HydrationParams{"f": "a"}, srv.Client(), testDynamicQueryInsecure)
 	if err != nil {
 		t.Fatal(err)
 	}

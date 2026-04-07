@@ -51,7 +51,7 @@ Playlist with the optional **playlists** extension overlay:
 p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
 ```
 
-Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item against core `PlaylistItem`, and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client)` when you only need `[]PlaylistItem`.
+Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item against core `PlaylistItem`, and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`, and `*playlist.DynamicQueryFetchOptions` or `nil` for HTTPS-only + SSRF-safe defaults). Set `AllowInsecureHTTP` on the options value to allow `http://` and local addresses (for example `httptest`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client, opts)` when you only need `[]PlaylistItem`. Use `errors.Is(err, playlist.ErrDynamicQueryEndpointPolicy)` when the outbound URL fails policy checks.
 
 ### Errors
 

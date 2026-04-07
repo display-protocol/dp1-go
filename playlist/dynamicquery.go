@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -41,7 +43,20 @@ var (
 	ErrDynamicQueryResponse = errors.New("dynamicQuery: response")
 	// ErrDynamicQueryItemInvalid is returned when a mapped item fails schema validation or decode.
 	ErrDynamicQueryItemInvalid = errors.New("dynamicQuery: invalid playlist item")
+	// ErrDynamicQueryEndpointPolicy is returned when the outbound URL fails security policy
+	// (scheme, userinfo, fragment, or SSRF checks). See [DynamicQueryFetchOptions].
+	ErrDynamicQueryEndpointPolicy = errors.New("dynamicQuery: endpoint policy")
 )
+
+// DynamicQueryFetchOptions configures outbound dynamicQuery HTTP behavior.
+// A nil pointer is treated as the zero value (secure defaults).
+type DynamicQueryFetchOptions struct {
+	// AllowInsecureHTTP, if true, permits http:// URLs and skips SSRF checks against
+	// loopback, private, and link-local addresses (for example httptest servers).
+	// When false (default), only https:// is allowed and the endpoint host must resolve
+	// only to publicly routable addresses.
+	AllowInsecureHTTP bool
+}
 
 var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 
@@ -54,7 +69,9 @@ var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 //
 // Hydration rules, HTTP behavior, and errors are the same as [PlaylistItemsFromDynamicQuery]
 // with dq set to p.DynamicQuery.
-func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationParams, client *http.Client) (*Playlist, error) {
+//
+// opts may be nil for default endpoint policy ([DynamicQueryFetchOptions] zero value).
+func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationParams, client *http.Client, opts *DynamicQueryFetchOptions) (*Playlist, error) {
 	if p == nil {
 		return nil, fmt.Errorf("%w: nil playlist", ErrDynamicQueryRequest)
 	}
@@ -63,7 +80,7 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 		return out, nil
 	}
 
-	dynamicItems, err := PlaylistItemsFromDynamicQuery(ctx, p.DynamicQuery, params, client)
+	dynamicItems, err := PlaylistItemsFromDynamicQuery(ctx, p.DynamicQuery, params, client, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +99,9 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this
 // function when p.DynamicQuery is non-nil.
 //
-// dq must be non-nil. ctx is attached to the outgoing request. client may be nil to use
-// [http.DefaultClient].
+// dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
+// checks. client may be nil to use [http.DefaultClient]. opts may be nil for default
+// endpoint policy ([DynamicQueryFetchOptions] zero value).
 //
 // When dq.Query is empty, no template hydration runs; the endpoint is still called (GraphQL
 // POST sends an empty query string; https-json GET uses the bare endpoint URL; https-json POST
@@ -91,18 +109,18 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 //
 // When dq.Query is non-empty, params must supply every placeholder name it uses; otherwise
 // hydration fails with [ErrDynamicQueryHydration]. Extra keys in params are ignored.
-func PlaylistItemsFromDynamicQuery(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client) ([]PlaylistItem, error) {
+func PlaylistItemsFromDynamicQuery(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client, opts *DynamicQueryFetchOptions) ([]PlaylistItem, error) {
 	if dq == nil {
 		return nil, fmt.Errorf("%w: nil dynamicQuery", ErrDynamicQueryRequest)
 	}
-	body, err := fetchDynamicQueryResponseBody(ctx, dq, params, client)
+	body, err := fetchDynamicQueryResponseBody(ctx, dq, params, client, opts)
 	if err != nil {
 		return nil, err
 	}
 	return playlistItemsFromDynamicQueryBody(body, dq)
 }
 
-func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client) ([]byte, error) {
+func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client, opts *DynamicQueryFetchOptions) ([]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -112,6 +130,9 @@ func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQue
 	}
 	req, err := buildDynamicQueryRequest(ctx, dq, hq)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateDynamicQueryRequestURL(ctx, req.URL, opts); err != nil {
 		return nil, err
 	}
 	resp, err := client.Do(req)
@@ -215,6 +236,78 @@ func defaultHTTPMethod(profile, explicit string) string {
 	default:
 		return http.MethodGet
 	}
+}
+
+func validateDynamicQueryRequestURL(ctx context.Context, u *url.URL, opts *DynamicQueryFetchOptions) error {
+	if u == nil {
+		return fmt.Errorf("%w: nil URL", ErrDynamicQueryEndpointPolicy)
+	}
+	if !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("%w: URL must be absolute with a host", ErrDynamicQueryEndpointPolicy)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%w: URL must not include user info", ErrDynamicQueryEndpointPolicy)
+	}
+	if u.Fragment != "" {
+		return fmt.Errorf("%w: URL must not include a fragment", ErrDynamicQueryEndpointPolicy)
+	}
+
+	allowInsecure := opts != nil && opts.AllowInsecureHTTP
+	switch u.Scheme {
+	case "https":
+		// ok
+	case "http":
+		if !allowInsecure {
+			return fmt.Errorf("%w: only https is allowed (set AllowInsecureHTTP for http)", ErrDynamicQueryEndpointPolicy)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported scheme %q", ErrDynamicQueryEndpointPolicy, u.Scheme)
+	}
+	if allowInsecure {
+		return nil
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("%w: missing host", ErrDynamicQueryEndpointPolicy)
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if !endpointIPAllowedProduction(ip) {
+			return fmt.Errorf("%w: non-public endpoint address", ErrDynamicQueryEndpointPolicy)
+		}
+		return nil
+	}
+	return validateDNSHostProduction(ctx, host)
+}
+
+func endpointIPAllowedProduction(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() {
+		return false
+	}
+	return true
+}
+
+func validateDNSHostProduction(ctx context.Context, host string) error {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("%w: resolve host: %w", ErrDynamicQueryEndpointPolicy, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("%w: host has no addresses", ErrDynamicQueryEndpointPolicy)
+	}
+	for _, ia := range addrs {
+		ipAddr, err := netip.ParseAddr(ia.IP.String())
+		if err != nil {
+			return fmt.Errorf("%w: invalid resolved IP", ErrDynamicQueryEndpointPolicy)
+		}
+		if !endpointIPAllowedProduction(ipAddr) {
+			return fmt.Errorf("%w: host resolves to non-public address", ErrDynamicQueryEndpointPolicy)
+		}
+	}
+	return nil
 }
 
 func buildDynamicQueryRequest(ctx context.Context, dq *playlists.DynamicQuery, hydratedQuery string) (*http.Request, error) {
