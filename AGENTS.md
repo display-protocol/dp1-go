@@ -10,7 +10,7 @@ This repository is the **Go SDK for [DP-1](https://github.com/display-protocol/d
 
 **Non-goals:** Implementing a full network player, license server, or UI. Those stay in consuming apps; this library supplies parsing, validation, signing primitives, and display-field merge order consistent with the spec.
 
-**Normative source of truth:** The DP-1 specification and schema files in the upstream spec repository. Embedded copies under `internal/schema/` must stay aligned with that spec; when the spec changes, update schemas, overlays, and any affected Go types/tests in the **same change**.
+**Normative source of truth:** The DP-1 specification and schema files in the upstream spec repository. Embedded copies under `internal/schema/` must stay aligned with that spec; when the spec changes, update schemas, composed extension bundles, and any affected Go types/tests in the **same change**.
 
 ## Coding defaults
 
@@ -43,7 +43,7 @@ This repository is the **Go SDK for [DP-1](https://github.com/display-protocol/d
 
 ## Repo-specific change rules
 
-- **Schemas:** Files live under `internal/schema/` (`core/`, `extensions/`, `overlay/`) and are embedded via `internal/schema/embed.go`. Every schema JSON must have a correct `$id` matching what `internal/validate` registers. Add or update overlays when combining core + extension validation in one path.
+- **Schemas:** Files live under `internal/schema/` (`core/`, `extensions/`) and are embedded via `internal/schema/embed.go`. Every schema JSON must have a correct `$id` matching what `internal/validate` registers. Composed playlist + playlists-extension validation uses `extensions/playlists/playlist_with_extension.json`.
 - **New document types or extensions:** Add schema → compiler registration in `validate` → `ParseAndValidate*` in the root package → typed structs in `playlist`, `playlistgroup`, `refmanifest`, or `extension/…` as appropriate. Add `ErrorCode` + `CodeFrom*Validation` when the UI/telemetry contract needs a stable code.
 - **Signing:** Keep signing logic in `sign/` and JCS in `jcs/`; avoid duplicating canonicalization in callers.
 - **Concurrency:** `jsonschema.Compiler.Compile` is not safe for concurrent use on the same instance; `internal/validate` uses a mutex around compile—preserve that if touching validation.

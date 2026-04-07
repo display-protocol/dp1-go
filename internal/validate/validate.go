@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	playlistSchemaURL                 = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
-	playlistItemSchemaURL             = playlistSchemaURL + "#/$defs/PlaylistItem"
-	playlistGroupSchemaURL            = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
-	refManifestSchemaURL              = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
-	channelsExtensionSchemaURL        = "https://dp1.feralfile.com/extensions/channels/v0.1.0/schema.json"
-	playlistsExtensionSchemaURL       = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/schema.json"
-	playlistPlaylistsOverlaySchemaURL = "https://display-protocol.github.io/dp1-go/schemas/overlay/playlist_and_playlists_extension.json"
+	playlistSchemaURL                       = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
+	playlistItemSchemaURL                   = playlistSchemaURL + "#/$defs/PlaylistItem"
+	playlistGroupSchemaURL                  = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
+	refManifestSchemaURL                    = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
+	channelsExtensionSchemaURL              = "https://dp1.feralfile.com/extensions/channels/v0.1.0/schema.json"
+	playlistsExtensionSchemaURL             = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/schema.json"
+	playlistWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/playlist_with_extension.json"
 )
 
 var (
@@ -109,10 +109,10 @@ func PlaylistItem(data []byte) error {
 	return validateAgainst(playlistItemSchemaURL, data)
 }
 
-// PlaylistWithPlaylistsExtension validates a playlist JSON document that may include
-// the registered "playlists" extension fields (core + extension allOf).
+// PlaylistWithPlaylistsExtension validates a playlist JSON document against the composed
+// playlists extension schema (bundled core + extension fragment; see playlist_with_extension.json).
 func PlaylistWithPlaylistsExtension(data []byte) error {
-	return validateAgainst(playlistPlaylistsOverlaySchemaURL, data)
+	return validateAgainst(playlistWithPlaylistsExtensionSchemaURL, data)
 }
 
 // PlaylistGroup validates a DP-1 playlist-group (exhibition) document.

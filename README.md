@@ -97,7 +97,7 @@ Shared and extension-specific structs live under `extension/` (for example `exte
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions + a small `overlay` for playlist + playlists-extension `allOf`).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `playlist_with_extension.json` for playlist + playlists-extension validation).
 
 ## Testing
 

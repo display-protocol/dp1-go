@@ -199,12 +199,30 @@ func TestPlaylistWithPlaylistsExtension_validationFailures(t *testing.T) {
 		{"core_missing_title", fmt.Sprintf(`{"dpVersion":"1.1.0","items":[{"source":"https://a"}],%s}`, playlistSigBlock)},
 		{"extension_summary_empty", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a"}],"summary":"",%s}`, playlistSigBlock)},
 		{"extension_cover_bad_uri", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a"}],"coverImage":"not a uri",%s}`, playlistSigBlock)},
+		{"items_empty_no_dynamic_query", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[],%s}`, playlistSigBlock)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assertErrValidation(t, PlaylistWithPlaylistsExtension([]byte(tc.doc)))
 		})
+	}
+}
+
+func TestPlaylistWithPlaylistsExtension_emptyItemsWithDynamicQuery(t *testing.T) {
+	t.Parallel()
+	doc := fmt.Sprintf(`{
+		"dpVersion":"1.1.0",
+		"title":"x",
+		"items":[],
+		"dynamicQuery":{
+			"profile":"graphql-v1",
+			"endpoint":"https://example.com/graphql",
+			"responseMapping":{"itemsPath":"data.items","itemSchema":"dp1/1.1"}
+		},
+		%s}`, playlistSigBlock)
+	if err := PlaylistWithPlaylistsExtension([]byte(doc)); err != nil {
+		t.Fatal(err)
 	}
 }
 

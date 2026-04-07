@@ -6,5 +6,4 @@ import "embed"
 //
 //go:embed all:core
 //go:embed all:extensions
-//go:embed overlay/*.json
 var FS embed.FS

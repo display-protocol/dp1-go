@@ -7,7 +7,7 @@ alwaysApply: true
 
 Go SDK for [DP-1](https://github.com/display-protocol/dp1): playlists, playlist-groups, ref manifests, optional JSON Schema extensions, JCS (RFC 8785), payload hashing, Ed25519 (legacy + multi-sig), and `merge` display resolution. **Not** a full player, license server, or UI.
 
-**Normative source:** DP-1 spec and upstream schemas. Embedded copies under `internal/schema/` must stay aligned—update schemas, overlays, Go types, and tests in the **same change**.
+**Normative source:** DP-1 spec and upstream schemas. Embedded copies under `internal/schema/` must stay aligned—update schemas, composed extension bundles, Go types, and tests in the **same change**.
 
 ## Coding defaults and style
 
@@ -24,7 +24,7 @@ Go SDK for [DP-1](https://github.com/display-protocol/dp1): playlists, playlist-
 
 ## Repo rules
 
-- **Schemas:** `internal/schema/` (`core/`, `extensions/`, `overlay/`), embedded in `internal/schema/embed.go`. Each schema JSON needs correct `$id` matching `internal/validate` registration; add overlays when combining core + extension in one validation path.
+- **Schemas:** `internal/schema/` (`core/`, `extensions/`), embedded in `internal/schema/embed.go`. Each schema JSON needs correct `$id` matching `internal/validate` registration; composed playlist + playlists-extension validation uses `extensions/playlists/playlist_with_extension.json`.
 - **New document/extension:** schema → `validate` → root `ParseAndValidate*` → typed structs under `playlist` / `playlistgroup` / `refmanifest` / `extension/…`; add `ErrorCode` + `CodeFrom*Validation` when UI/telemetry needs a stable code.
 - **Signing:** keep canonicalization in `sign/` and JCS in `jcs/`—no duplicate pipelines in callers.
 - **Concurrency:** `jsonschema.Compiler.Compile` is not safe concurrent on one instance—`internal/validate` holds a mutex around compile; preserve when touching validation.

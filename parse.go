@@ -33,7 +33,7 @@ func ParseAndValidatePlaylist(data []byte) (*playlist.Playlist, error) {
 	return &p, nil
 }
 
-// ParseAndValidatePlaylistWithPlaylistsExtension validates core + playlists extension overlay.
+// ParseAndValidatePlaylistWithPlaylistsExtension validates against the composed playlists extension schema (core bundle + extension fragment).
 func ParseAndValidatePlaylistWithPlaylistsExtension(data []byte) (*playlist.Playlist, error) {
 	if err := PlaylistWithPlaylistsExtensionSchemaValidate(data); err != nil {
 		return nil, CodeFromPlaylistValidation(err)
