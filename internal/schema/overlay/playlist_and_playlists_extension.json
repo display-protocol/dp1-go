@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://display-protocol.github.io/dp1-go/schemas/overlay/playlist_and_playlists_extension.json",
+  "title": "DP-1 Playlist with playlists extension",
+  "allOf": [
+    { "$ref": "https://dp1.feralfile.com/schemas/v1.1.1/playlist.json" },
+    { "$ref": "https://dp1.feralfile.com/extensions/playlists/v0.1.0/schema.json" }
+  ]
+}

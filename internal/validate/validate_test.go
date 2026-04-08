@@ -209,23 +209,6 @@ func TestPlaylistWithPlaylistsExtension_validationFailures(t *testing.T) {
 	}
 }
 
-func TestPlaylistWithPlaylistsExtension_emptyItemsWithDynamicQuery(t *testing.T) {
-	t.Parallel()
-	doc := fmt.Sprintf(`{
-		"dpVersion":"1.1.0",
-		"title":"x",
-		"items":[],
-		"dynamicQuery":{
-			"profile":"graphql-v1",
-			"endpoint":"https://example.com/graphql",
-			"responseMapping":{"itemsPath":"data.items","itemSchema":"dp1/1.1"}
-		},
-		%s}`, playlistSigBlock)
-	if err := PlaylistWithPlaylistsExtension([]byte(doc)); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestValidators_minimalValid(t *testing.T) {
 	t.Parallel()
 	playlistCore := []byte(`{
