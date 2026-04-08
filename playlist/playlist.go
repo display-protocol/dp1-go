@@ -15,6 +15,7 @@ type Playlist struct {
 	Title      string         `json:"title"`
 	Slug       string         `json:"slug,omitempty"`
 	Created    string         `json:"created,omitempty"`
+	Note       *Note          `json:"note,omitempty"`
 	Defaults   *Defaults      `json:"defaults,omitempty"`
 	Items      []PlaylistItem `json:"items"`
 	Signatures []Signature    `json:"signatures,omitempty"` // v1.1+
@@ -36,6 +37,12 @@ type Defaults struct {
 	Duration *float64      `json:"duration,omitempty"`
 }
 
+// Note is optional explanatory metadata shown by supporting players before a playlist or item.
+type Note struct {
+	Text            string `json:"text"`
+	DisplayDuration *int   `json:"display_duration,omitempty"`
+}
+
 // PlaylistItem is one entry in a playlist.
 type PlaylistItem struct {
 	ID         string           `json:"id,omitempty"`
@@ -46,6 +53,7 @@ type PlaylistItem struct {
 	License    string           `json:"license,omitempty"`
 	Ref        string           `json:"ref,omitempty"`
 	RefHash    string           `json:"refHash,omitempty"` // prose spec; not in core JSON Schema yet
+	Note       *Note            `json:"note,omitempty"`
 	Override   json.RawMessage  `json:"override,omitempty"`
 	Display    *DisplayPrefs    `json:"display,omitempty"`
 	Repro      *ReproBlock      `json:"repro,omitempty"`
