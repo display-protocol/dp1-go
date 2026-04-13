@@ -21,3 +21,6 @@ type Channel struct {
 	Signatures []playlist.Signature `json:"signatures,omitempty"`
 	Signature  string               `json:"signature,omitempty"`
 }
+
+// RolePublisher is the role of the publisher of the channel.
+const RolePublisher = "publisher"
