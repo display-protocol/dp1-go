@@ -4,7 +4,7 @@
 [![Lint](https://github.com/display-protocol/dp1-go/actions/workflows/lint.yaml/badge.svg)](https://github.com/display-protocol/dp1-go/actions/workflows/lint.yaml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/display-protocol/dp1-go/graph/badge.svg)](https://codecov.io/gh/display-protocol/dp1-go)
 
-Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), Ed25519 verification (legacy + multi-signature), and registered JSON Schema extensions.
+Go SDK for the [DP-1 protocol](https://github.com/display-protocol/dp1): playlists, playlist-groups (exhibitions), ref manifests, JCS signing payloads (RFC 8785), signature verification (Ed25519 + Ethereum EIP-191), and registered JSON Schema extensions.
 
 **Module:** `github.com/display-protocol/dp1-go`
 
@@ -75,11 +75,54 @@ _ = dp1.WarnMajorMismatch(v, 1) // optional: warn if document major ≠ player m
 
 ### Signing (`github.com/display-protocol/dp1-go/sign`)
 
-- `sign.PayloadHashString` / `sign.VerifyPayloadHash` — `sha256:<hex>` for `payload_hash` (DP-1 §7.1: strip top-level signature fields, JCS, trailing LF, then SHA-256).
-- `sign.SignLegacyEd25519` / `sign.VerifyLegacyEd25519` — v1.0.x `signature: ed25519:<hex>` over that same digest.
-- `sign.Ed25519DIDKey` / `sign.Ed25519PublicKeyFromDIDKey` — encode and decode `did:key` for a raw Ed25519 public key (W3C did:key: multicodec ed25519-pub + multibase base58btc). `VerifyMultiEd25519` accepts only this `kid` form.
-- `sign.SignMultiEd25519` / `sign.VerifyMultiEd25519` — v1.1+ `signatures[]`: Ed25519 signs the same **32-byte** digest; `SignMultiEd25519` sets `kid` via `Ed25519DIDKey`; `payload_hash` is checked separately. Ed25519 only for now.
-- `sign.VerifyMultiSignaturesJSON` — decodes the top-level `signatures` array from raw JSON and verifies each entry (same rules as `VerifyMultiEd25519`); shared by playlist, playlist-group, and channel documents. `sign.VerifyPlaylistSignatures`, `sign.VerifyPlaylistGroupSignatures`, and `sign.VerifyChannelSignatures` are equivalent wrappers for clarity. Returns an error if JSON is invalid, `signatures` is missing or empty (`ErrNoSignatures`), or a signature entry cannot decode; otherwise ok plus failed `playlist.Signature` values (in order). Non-Ed25519 algorithms count as failures.
+The `sign` package implements DP-1 §7.1 signing: strip signature fields → JCS (RFC 8785) → append LF → SHA-256. All algorithms sign the same 32-byte digest. Supports Ed25519 (`did:key`) and Ethereum EIP-191 (`did:pkh`).
+
+#### Common
+
+- `sign.PayloadHashString` / `sign.VerifyPayloadHash` — compute or verify `sha256:<hex>` for `payload_hash` field.
+
+#### Ed25519 (algorithm: `ed25519`)
+
+- `sign.SignMultiEd25519(raw, priv, role, ts)` — create v1.1+ signature with `did:key` kid.
+- `sign.VerifyMultiSignature(raw, sig)` — verify any supported algorithm (ed25519, eip191).
+- `sign.Ed25519DIDKey` / `sign.Ed25519PublicKeyFromDIDKey` — encode/decode W3C `did:key` for Ed25519 public keys.
+- Legacy v1.0.x: `sign.SignLegacyEd25519` / `sign.VerifyLegacyEd25519` — single `signature: ed25519:<hex>` field.
+
+#### Ethereum EIP-191 (algorithm: `eip191`)
+
+- `sign.SignMultiEIP191(raw, priv, chainID, role, ts)` — create signature using Ethereum personal_sign (EIP-191 version 0x45) with `did:pkh` kid.
+- `sign.VerifyMultiSignature(raw, sig)` — verify (same function as Ed25519, dispatches by `sig.Alg`).
+- `sign.EthereumAddressToDIDPKH(addr, chainID)` / `sign.EthereumAddressFromDIDPKH(kid)` — encode/decode `did:pkh:eip155:{chainID}:{address}` (CAIP-10).
+- Works with all EVM chains: Ethereum (1), Polygon (137), Arbitrum (42161), Base (8453), etc.
+
+**Example: Sign with Ethereum**
+
+```go
+import (
+    "github.com/ethereum/go-ethereum/crypto"
+    "github.com/display-protocol/dp1-go/sign"
+    "github.com/display-protocol/dp1-go/playlist"
+)
+
+priv, _ := crypto.GenerateKey()  // or crypto.HexToECDSA(hexKey)
+raw, _ := json.Marshal(playlist)
+
+// Sign for Ethereum mainnet (chainID=1)
+sig, err := sign.SignMultiEIP191(raw, priv, 1, playlist.RoleCurator, "2026-04-13T10:00:00Z")
+// sig.Alg = "eip191"
+// sig.Kid = "did:pkh:eip155:1:0xB9C5714089478a327F09197987f16f9E5d936E8a"
+
+// Verify
+err = sign.VerifyMultiSignature(raw, sig)
+```
+
+#### Multi-signature verification
+
+- `sign.VerifyMultiSignaturesJSON(raw)` — decode `signatures[]` array and verify all entries; returns `(ok, failed, err)`.
+- `sign.VerifyPlaylistSignatures` / `sign.VerifyPlaylistGroupSignatures` / `sign.VerifyChannelSignatures` — equivalent wrappers for clarity.
+- Documents can mix Ed25519 and Ethereum signatures; each is verified independently.
+
+**Replay protections:** Cross-document replay prevented by `payload_hash`. Cross-chain and temporal replay not enforced (see package docs).
 
 ### Display merge (`github.com/display-protocol/dp1-go/merge`)
 
