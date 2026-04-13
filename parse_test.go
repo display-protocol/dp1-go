@@ -10,6 +10,7 @@ import (
 	"github.com/display-protocol/dp1-go"
 	"github.com/display-protocol/dp1-go/extension/channels"
 	"github.com/display-protocol/dp1-go/extension/identity"
+	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/playlist"
 	"github.com/display-protocol/dp1-go/playlistgroup"
 	"github.com/display-protocol/dp1-go/refmanifest"
@@ -114,11 +115,16 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dur := 15.0
 	pl := playlist.Playlist{
 		DPVersion: "1.1.0",
 		Title:     "Ext",
-		Items:     []playlist.PlaylistItem{{Source: "https://a"}},
-		Summary:   "A curated feed",
+		Note:      &playlists.Note{Text: "Welcome", Duration: &dur},
+		Items: []playlist.PlaylistItem{{
+			Source: "https://a",
+			Note:   &playlists.Note{Text: "Track intro"},
+		}},
+		Summary: "A curated feed",
 		Curators: []identity.Entity{
 			{Name: "Alice", Key: kid},
 		},
@@ -133,6 +139,12 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	}
 	if out.Summary != "A curated feed" {
 		t.Fatal(out.Summary)
+	}
+	if out.Note == nil || out.Note.Text != "Welcome" || out.Note.Duration == nil || *out.Note.Duration != 15 {
+		t.Fatalf("note: %+v", out.Note)
+	}
+	if len(out.Items) != 1 || out.Items[0].Note == nil || out.Items[0].Note.Text != "Track intro" {
+		t.Fatalf("item: %+v", out.Items)
 	}
 }
 

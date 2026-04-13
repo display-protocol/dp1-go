@@ -93,11 +93,11 @@ prefs, err := merge.DisplayForItem(def, refManifest, item)
 
 ### Extension types (optional)
 
-Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay, `extension/identity` for `Entity`, `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
+Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`, `extension/identity` for `Entity`, `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `playlist_with_extension.json` for playlist + playlists-extension validation).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with optional `note` / per-item `note` overlays, and `playlist_with_extension.json` for full playlist + playlists-extension validation).
 
 ## Testing
 
