@@ -2,7 +2,25 @@ name: Test
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "internal/schema/**"
+      - ".github/workflows/test.yaml"
   pull_request:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "internal/schema/**"
+      - ".github/workflows/test.yaml"
 
 permissions:
   contents: read

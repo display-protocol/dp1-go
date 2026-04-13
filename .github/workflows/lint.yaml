@@ -2,7 +2,27 @@ name: Lint
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "internal/schema/**"
+      - ".golangci.yml"
+      - ".github/workflows/lint.yaml"
   pull_request:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/**"
+      - "internal/schema/**"
+      - ".golangci.yml"
+      - ".github/workflows/lint.yaml"
 
 jobs:
   golangci:
