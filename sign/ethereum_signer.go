@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/display-protocol/dp1-go/playlist"
@@ -46,9 +47,10 @@ func (s *EthereumSigner) Alg() string {
 // Sign creates an Ethereum personal_sign (EIP-191) signature over the DP-1 signing digest.
 //
 // The signing process:
-//  1. Sign the 32-byte digest using crypto.Sign (applies personal_sign prefix internally)
-//  2. Derive the Ethereum address from the private key's public key
-//  3. Create did:pkh identifier: did:pkh:eip155:{chainID}:{address}
+//  1. Apply Ethereum personal_sign prefix to the digest: "\x19Ethereum Signed Message:\n32" + digest
+//  2. Sign the prefixed message using crypto.Sign
+//  3. Derive the Ethereum address from the private key's public key
+//  4. Create did:pkh identifier: did:pkh:eip155:{chainID}:{address}
 //
 // Returns:
 //   - kid: did:pkh identifier with EIP-55 checksummed address
@@ -58,8 +60,11 @@ func (s *EthereumSigner) Alg() string {
 // Note: The returned signature v value will be 0 or 1. Some Ethereum implementations
 // expect 27/28; adjust if needed for your use case.
 func (s *EthereumSigner) Sign(digest [32]byte) (string, []byte, error) {
-	// Sign the digest (crypto.Sign applies personal_sign prefix)
-	sigBytes, err := crypto.Sign(digest[:], s.privateKey)
+	// Apply Ethereum personal_sign message prefix
+	message := accounts.TextHash(digest[:])
+
+	// Sign the prefixed message
+	sigBytes, err := crypto.Sign(message, s.privateKey)
 	if err != nil {
 		return "", nil, fmt.Errorf("ethereum sign: %w", err)
 	}

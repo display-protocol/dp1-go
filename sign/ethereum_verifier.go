@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/display-protocol/dp1-go/playlist"
@@ -65,8 +66,10 @@ func (v *EthereumVerifier) VerifySignature(kid string, sigBytes []byte, digest [
 	}
 
 	// Recover public key from signature
-	// Note: crypto.SigToPub expects the digest that was signed (32 bytes)
-	pubKey, err := crypto.SigToPub(digest[:], sigBytes)
+	// Apply Ethereum personal_sign message prefix: "\x19Ethereum Signed Message:\n32" + digest
+	// This matches what wallets do when signing with personal_sign / eth_sign
+	message := accounts.TextHash(digest[:])
+	pubKey, err := crypto.SigToPub(message, sigBytes)
 	if err != nil {
 		return fmt.Errorf("%w: recover public key: %w", ErrSigInvalid, err)
 	}
