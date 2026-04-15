@@ -3,6 +3,12 @@ package playlists
 
 import "github.com/display-protocol/dp1-go/extension/identity"
 
+// Note is an experimental intermission card: short artist-authored text before the playlist or an item (not DP-1 core).
+type Note struct {
+	Text     string   `json:"text"`
+	Duration *float64 `json:"duration,omitempty"` // display seconds when present; schema default 20 when omitted
+}
+
 // DynamicQuery configures dynamic item fetching from an indexer.
 type DynamicQuery struct {
 	Profile         string            `json:"profile"`
@@ -22,6 +28,7 @@ type ResponseMapping struct {
 
 // Overlay is the optional top-level extension object merged into a core playlist JSON value.
 type Overlay struct {
+	Note         *Note             `json:"note,omitempty"`
 	Curators     []identity.Entity `json:"curators,omitempty"`
 	Summary      string            `json:"summary,omitempty"`
 	CoverImage   string            `json:"coverImage,omitempty"`

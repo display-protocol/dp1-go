@@ -23,6 +23,7 @@ type Playlist struct {
 	// --- Registry extension: "playlists" (draft) — additive optional fields only ---
 	// These are not part of DP-1 core JSON Schema; they are validated only when using
 	// ParseAndValidatePlaylistWithPlaylistsExtension. Safe to omit for core-only documents.
+	Note         *playlists.Note         `json:"note,omitempty"`
 	Curators     []identity.Entity       `json:"curators,omitempty"`
 	Summary      string                  `json:"summary,omitempty"`
 	CoverImage   string                  `json:"coverImage,omitempty"`
@@ -50,6 +51,9 @@ type PlaylistItem struct {
 	Display    *DisplayPrefs    `json:"display,omitempty"`
 	Repro      *ReproBlock      `json:"repro,omitempty"`
 	Provenance *ProvenanceBlock `json:"provenance,omitempty"`
+
+	// Playlists extension only (ParseAndValidatePlaylistWithPlaylistsExtension); not in core schema.
+	Note *playlists.Note `json:"note,omitempty"`
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).

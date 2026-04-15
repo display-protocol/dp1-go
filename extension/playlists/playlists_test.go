@@ -9,7 +9,9 @@ import (
 
 func TestOverlay_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
+	dur := 20.0
 	o := Overlay{
+		Note:     &Note{Text: "Interlude", Duration: &dur},
 		Curators: []identity.Entity{{Name: "A", Key: "did:key:z"}},
 		Summary:  "S",
 		DynamicQuery: &DynamicQuery{
@@ -32,5 +34,8 @@ func TestOverlay_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Summary != o.Summary {
 		t.Fatal(out.Summary)
+	}
+	if out.Note == nil || out.Note.Text != "Interlude" || out.Note.Duration == nil || *out.Note.Duration != 20 {
+		t.Fatalf("note: %+v", out.Note)
 	}
 }

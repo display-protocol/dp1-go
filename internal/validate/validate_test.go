@@ -181,6 +181,8 @@ func TestPlaylistsExtensionFragment_validationFailures(t *testing.T) {
 		{"coverImage_not_uri", `{"coverImage":"not a uri"}`},
 		{"curator_missing_key", `{"curators":[{"name":"A"}]}`},
 		{"dynamicQuery_incomplete", `{"dynamicQuery":{"profile":"https-json-v1"}}`},
+		{"note_text_empty", `{"note":{"text":""}}`},
+		{"note_duration_not_positive", `{"note":{"text":"x","duration":0}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -200,12 +202,27 @@ func TestPlaylistWithPlaylistsExtension_validationFailures(t *testing.T) {
 		{"extension_summary_empty", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a"}],"summary":"",%s}`, playlistSigBlock)},
 		{"extension_cover_bad_uri", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a"}],"coverImage":"not a uri",%s}`, playlistSigBlock)},
 		{"items_empty_no_dynamic_query", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[],%s}`, playlistSigBlock)},
+		{"note_text_empty", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","note":{"text":""},"items":[{"source":"https://a"}],%s}`, playlistSigBlock)},
+		{"item_note_duration_zero", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","note":{"text":"x","duration":0}}],%s}`, playlistSigBlock)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assertErrValidation(t, PlaylistWithPlaylistsExtension([]byte(tc.doc)))
 		})
+	}
+}
+
+func TestPlaylistWithPlaylistsExtension_withNotes(t *testing.T) {
+	t.Parallel()
+	doc := fmt.Sprintf(`{
+		"dpVersion":"1.1.0",
+		"title":"x",
+		"note":{"text":"Before the show","duration":12},
+		"items":[{"source":"https://a","note":{"text":"Before first work"}}],
+		%s}`, playlistSigBlock)
+	if err := PlaylistWithPlaylistsExtension([]byte(doc)); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -279,6 +296,10 @@ func TestValidators_minimalValid(t *testing.T) {
 	}
 	extOnly := []byte(`{"summary":"x"}`)
 	if err := PlaylistsExtensionFragment(extOnly); err != nil {
+		t.Fatal(err)
+	}
+	noteOnly := []byte(`{"note":{"text":"hello"}}`)
+	if err := PlaylistsExtensionFragment(noteOnly); err != nil {
 		t.Fatal(err)
 	}
 	overlay := []byte(`{
