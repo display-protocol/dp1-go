@@ -22,7 +22,7 @@ func TestChannel_JSONRoundTrip(t *testing.T) {
 		Signatures: []playlist.Signature{{
 			Alg: "ed25519", Kid: "did:key:z", Ts: "2025-01-01T00:00:00Z",
 			PayloadHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-			Role:        playlist.RoleCurator, Sig: "ghi",
+			Role:        RolePublisher, Sig: "ghi",
 		}},
 	}
 	b, err := json.Marshal(&c)

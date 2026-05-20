@@ -162,12 +162,35 @@ func TestChannelsExtension_validationFailures(t *testing.T) {
 		{"playlists_empty", `{"id":"385f79b6-a45f-4c1c-8080-e93a192adccc","slug":"s","title":"c","version":"1.0.0","created":"2025-01-01T00:00:00Z","playlists":[],` + channelSigBlock + `}`},
 		{"id_not_uuid", `{"id":"x","slug":"s","title":"c","version":"1.0.0","created":"2025-01-01T00:00:00Z","playlists":["https://p"],` + channelSigBlock + `}`},
 		{"no_signature", `{"id":"385f79b6-a45f-4c1c-8080-e93a192adccc","slug":"s","title":"c","version":"1.0.0","created":"2025-01-01T00:00:00Z","playlists":["https://p"]}`},
+		{"sig_role_invalid", `{"id":"385f79b6-a45f-4c1c-8080-e93a192adccc","slug":"s","title":"c","version":"1.0.0","created":"2025-01-01T00:00:00Z","playlists":["https://p"],
+			"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+			"ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			"role":"owner","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assertErrValidation(t, ChannelsExtension([]byte(tc.doc)))
 		})
+	}
+}
+
+func TestChannelsExtension_publisherRole(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{
+		"id":"385f79b6-a45f-4c1c-8080-e93a192adccc",
+		"slug":"s",
+		"title":"c",
+		"version":"1.0.0",
+		"created":"2025-01-01T00:00:00Z",
+		"playlists":["https://p"],
+		"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+			"ts":"2025-01-01T00:00:00Z",
+			"payload_hash":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			"role":"publisher","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]
+	}`)
+	if err := ChannelsExtension(doc); err != nil {
+		t.Fatal(err)
 	}
 }
 
