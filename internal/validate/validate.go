@@ -19,8 +19,8 @@ const (
 	playlistGroupSchemaURL                  = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
 	refManifestSchemaURL                    = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
 	channelsExtensionSchemaURL              = "https://dp1.feralfile.com/extensions/channels/v1.0.0/schema.json"
-	playlistsExtensionSchemaURL             = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/schema.json"
-	playlistWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/playlist_with_extension.json"
+	playlistsExtensionSchemaURL             = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/schema.json"
+	playlistWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_with_extension.json"
 )
 
 var (

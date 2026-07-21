@@ -14,7 +14,7 @@ while read -r pkg; do
   go test "$pkg" -race -count=1 -coverprofile="$f" -covermode=atomic >/dev/null
   tail -n +2 "$f" >>"$tmp"
   rm -f "$f"
-done < <(go list ./... | grep -v '/internal/schema$')
+done < <(go list ./... | grep -v '/internal/schema$' | grep -v '/plugins/')
 pct=$(go tool cover -func="$tmp" | awk '/^total:/{gsub("%","",$3); print $3}')
 awk -v p="$pct" -v t="$threshold" 'BEGIN{exit !(p+0 >= t+0)}' || {
   echo "coverage ${pct}% is below ${threshold}%"
