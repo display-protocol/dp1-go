@@ -55,7 +55,7 @@ type PlaylistItem struct {
 
 	// Playlists extension only (ParseAndValidatePlaylistWithPlaylistsExtension); not in core schema.
 	Note      *playlists.Note `json:"note,omitempty"`
-	DisplayAt string          `json:"displayAt,omitempty"` // ISO 8601 scheduling date or datetime (§3.5.2)
+	DisplayAt string          `json:"displayAt,omitempty"` // ISO 8601 scheduling datetime (§3.5.2; date-only not accepted)
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).

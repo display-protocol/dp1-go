@@ -207,11 +207,10 @@ func TestComputeActiveSet_InvalidDisplayAt(t *testing.T) {
 func TestComputeActiveSet_CalendarInvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	// Schema patterns are syntactic only; 2026-02-30 matches the date regex but is
-	// calendar-invalid. Per §3.5.5 it must be excluded (not treated as evergreen).
+	// Date-only and calendar-invalid local values are unresolvable: excluded, not evergreen (§3.5.5).
 	p := byDisplayAtPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
-		makeItem("1", "BadCal", "https://a.com/bad", "2026-02-30"),
+		makeItem("1", "DateOnly", "https://a.com/dateonly", "2026-02-28"), // date-only rejected
 		makeItem("2", "BadLocal", "https://a.com/badlocal", "2026-02-30T00:00:00"),
 		makeItem("3", "Valid", "https://a.com/v", "2026-07-21T00:00:00"),
 	)
@@ -451,12 +450,12 @@ func TestNextDisplayAt_ReturnsSmallest(t *testing.T) {
 	}
 }
 
-func TestComputeActiveSet_DateOnlyLocal(t *testing.T) {
+func TestComputeActiveSet_LocalDatetimeTimezone(t *testing.T) {
 	t.Parallel()
 
 	p := byDisplayAtPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
-		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21"), // date-only
+		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
 	)
 
 	locVN, _ := time.LoadLocation("Asia/Ho_Chi_Minh") // UTC+7

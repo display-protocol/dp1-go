@@ -77,7 +77,7 @@ func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 				ID:        "2",
 				Title:     "Day 1",
 				Source:    "https://cdn.example.com/day1.html",
-				DisplayAt: "2026-07-21",
+				DisplayAt: "2026-07-21T00:00:00",
 			},
 			{
 				ID:        "3",
@@ -117,7 +117,7 @@ func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 		t.Fatalf("expected 4 items, got %d", len(out.Items))
 	}
 
-	expected := []string{"", "2026-07-21", "2026-07-22T00:00:00", "2026-07-23T00:00:00Z"}
+	expected := []string{"", "2026-07-21T00:00:00", "2026-07-22T00:00:00", "2026-07-23T00:00:00Z"}
 	for i, want := range expected {
 		if out.Items[i].DisplayAt != want {
 			t.Errorf("item[%d].DisplayAt = %q, want %q", i, out.Items[i].DisplayAt, want)
@@ -132,7 +132,6 @@ func TestPlaylistItem_DisplayAt_Formats(t *testing.T) {
 		name      string
 		displayAt string
 	}{
-		{"date_only", "2026-07-21"},
 		{"local_datetime", "2026-07-21T00:00:00"},
 		{"local_with_frac", "2026-07-21T00:00:00.123"},
 		{"absolute_Z", "2026-07-21T00:00:00Z"},

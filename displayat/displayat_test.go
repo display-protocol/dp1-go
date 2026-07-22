@@ -5,32 +5,14 @@ import (
 	"time"
 )
 
-func TestParse_DateOnly(t *testing.T) {
+func TestParse_RejectsDateOnly(t *testing.T) {
 	t.Parallel()
-	loc, _ := time.LoadLocation("America/New_York")
 
-	tests := []struct {
-		raw      string
-		wantKind Kind
-		wantTime string // RFC3339 in loc
-	}{
-		{"2026-07-21", KindDateOnly, "2026-07-21T00:00:00"},
-		{"2026-01-01", KindDateOnly, "2026-01-01T00:00:00"},
-		{"2026-12-31", KindDateOnly, "2026-12-31T00:00:00"},
-	}
-
-	for _, tc := range tests {
-		p := Parse(tc.raw, loc)
-		if p.Kind != tc.wantKind {
-			t.Errorf("Parse(%q): got kind %v, want %v", tc.raw, p.Kind, tc.wantKind)
-		}
-		if !p.IsValid() {
-			t.Errorf("Parse(%q): expected valid", tc.raw)
-			continue
-		}
-		got := p.Resolved.In(loc).Format("2006-01-02T15:04:05")
-		if got != tc.wantTime {
-			t.Errorf("Parse(%q): got time %s, want %s", tc.raw, got, tc.wantTime)
+	// §3.5.2: date-only YYYY-MM-DD is not an accepted wire form.
+	for _, raw := range []string{"2026-07-21", "2026-01-01", "2026-12-31"} {
+		p := Parse(raw, time.UTC)
+		if p.IsValid() {
+			t.Errorf("Parse(%q): expected invalid for date-only, got kind %v", raw, p.Kind)
 		}
 	}
 }
@@ -101,6 +83,7 @@ func TestParse_Invalid(t *testing.T) {
 	invalids := []string{
 		"",
 		"not-a-date",
+		"2026-07-21",               // date-only rejected per §3.5.2
 		"2026-13-01",               // invalid month
 		"2026-07-32",               // invalid day
 		"2026-07-21T25:00:00",      // invalid hour
@@ -164,7 +147,6 @@ func TestKind_String(t *testing.T) {
 		want string
 	}{
 		{KindInvalid, "invalid"},
-		{KindDateOnly, "date-only"},
 		{KindLocal, "local"},
 		{KindAbsolute, "absolute"},
 	}
@@ -191,9 +173,9 @@ func TestMustParse_Panics(t *testing.T) {
 func TestMustParse_Valid(t *testing.T) {
 	t.Parallel()
 
-	p := MustParse("2026-07-21", time.UTC)
-	if p.Kind != KindDateOnly {
-		t.Errorf("got kind %v, want KindDateOnly", p.Kind)
+	p := MustParse("2026-07-21T00:00:00", time.UTC)
+	if p.Kind != KindLocal {
+		t.Errorf("got kind %v, want KindLocal", p.Kind)
 	}
 }
 
@@ -201,11 +183,10 @@ func TestParse_NilLocation(t *testing.T) {
 	t.Parallel()
 
 	// When loc is nil, should default to UTC.
-	p := Parse("2026-07-21", nil)
-	if p.Kind != KindDateOnly {
-		t.Errorf("got kind %v, want KindDateOnly", p.Kind)
+	p := Parse("2026-07-21T00:00:00", nil)
+	if p.Kind != KindLocal {
+		t.Errorf("got kind %v, want KindLocal", p.Kind)
 	}
-	// Should resolve to midnight UTC.
 	want := "2026-07-21T00:00:00Z"
 	got := p.Resolved.UTC().Format(time.RFC3339)
 	if got != want {
@@ -244,11 +225,9 @@ func TestParse_InvalidCalendarDates(t *testing.T) {
 
 	// These pass regex but fail time.Parse due to invalid calendar values.
 	invalids := []string{
-		"2026-02-30",                // Feb 30 doesn't exist (date-only)
 		"2026-02-30T00:00:00",       // Feb 30 doesn't exist (local)
 		"2026-02-30T00:00:00Z",      // Feb 30 doesn't exist (absolute)
 		"2026-04-31T12:00:00+07:00", // Apr 31 doesn't exist
-		"2026-06-31",                // Jun 31 doesn't exist
 	}
 
 	for _, raw := range invalids {
@@ -321,7 +300,6 @@ func TestParse_DSTGapMidnight(t *testing.T) {
 	for _, raw := range []string{
 		"2026-03-08T00:00:00",
 		"2026-03-08T00:30:00",
-		"2026-03-08", // date-only = local midnight, also in the gap
 	} {
 		p := Parse(raw, loc)
 		if !p.IsValid() {
@@ -346,7 +324,6 @@ func TestParse_FullDayZoneSkip(t *testing.T) {
 
 	want := "2011-12-31T00:00:00+14:00"
 	for _, raw := range []string{
-		"2011-12-30",
 		"2011-12-30T00:00:00",
 		"2011-12-30T12:00:00",
 	} {
@@ -365,8 +342,8 @@ func TestParse_FullDayZoneSkip(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{"2011-12-29", "2011-12-29T00:00:00-10:00"},
-		{"2011-12-31", "2011-12-31T00:00:00+14:00"},
+		{"2011-12-29T00:00:00", "2011-12-29T00:00:00-10:00"},
+		{"2011-12-31T00:00:00", "2011-12-31T00:00:00+14:00"},
 	} {
 		p := Parse(tc.raw, loc)
 		got := p.Resolved.In(loc).Format(time.RFC3339)

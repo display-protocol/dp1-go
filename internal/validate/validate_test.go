@@ -274,7 +274,7 @@ func TestPlaylistWithPlaylistsExtension_scheduleAndDisplayAt(t *testing.T) {
 		"schedule":{"byDisplayAt":true},
 		"items":[
 			{"source":"https://a.com/intro"},
-			{"source":"https://a.com/day1","displayAt":"2026-07-21"},
+			{"source":"https://a.com/day1","displayAt":"2026-07-21T00:00:00"},
 			{"source":"https://a.com/day2","displayAt":"2026-07-22T00:00:00"},
 			{"source":"https://a.com/day3","displayAt":"2026-07-23T00:00:00Z"},
 			{"source":"https://a.com/day4","displayAt":"2026-07-24T09:00:00+07:00"}
@@ -291,6 +291,7 @@ func TestPlaylistWithPlaylistsExtension_displayAtValidationFailures(t *testing.T
 		name      string
 		displayAt string
 	}{
+		{"date_only", "2026-07-21"},
 		{"compact_offset_no_colon", "2026-07-21T00:00:00+0700"},
 		{"invalid_month", "2026-13-01T00:00:00"},
 		{"invalid_day", "2026-07-32T00:00:00"},

@@ -25,7 +25,7 @@ import (
 // If all timed items are in the future, returns only evergreen items.
 // If no items qualify, returns an empty slice.
 //
-// The loc parameter is used to resolve date-only and local datetime displayAt values
+// The loc parameter is used to resolve local datetime displayAt values
 // (pass the playback device's local timezone).
 func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) []playlist.PlaylistItem {
 	if p == nil {
@@ -98,7 +98,7 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 //
 // Unresolvable displayAt values are skipped (they are not timer candidates per §3.5.5).
 //
-// The loc parameter is used to resolve date-only and local datetime displayAt values
+// The loc parameter is used to resolve local datetime displayAt values
 // (pass the playback device's local timezone).
 func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *time.Time {
 	if p == nil {
