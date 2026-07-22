@@ -971,6 +971,7 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	orig := &Playlist{
 		DPVersion: "1.1.0",
 		Title:     "orig",
+		Schedule:  &playlists.Schedule{ByDisplayAt: true},
 		Defaults: &Defaults{
 			Display: &DisplayPrefs{
 				Scaling: "fit",
@@ -1007,6 +1008,13 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 	if out.Defaults == orig.Defaults || out.Defaults.Display == orig.Defaults.Display {
 		t.Fatal("expected cloned defaults")
+	}
+	if out.Schedule == orig.Schedule {
+		t.Fatal("expected cloned schedule")
+	}
+	out.Schedule.ByDisplayAt = false
+	if !orig.Schedule.ByDisplayAt {
+		t.Fatal("mutating cloned schedule must not change original")
 	}
 	if len(out.Signatures) != len(orig.Signatures) || &out.Signatures[0] == &orig.Signatures[0] {
 		t.Fatal("expected cloned signatures slice")

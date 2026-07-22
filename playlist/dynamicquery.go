@@ -530,6 +530,10 @@ func clonePlaylist(p *Playlist) *Playlist {
 		}
 		c.Defaults = &d
 	}
+	if p.Schedule != nil {
+		s := *p.Schedule
+		c.Schedule = &s
+	}
 	if p.DynamicQuery != nil {
 		dq := *p.DynamicQuery
 		if len(p.DynamicQuery.Headers) > 0 {
