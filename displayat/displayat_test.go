@@ -244,11 +244,11 @@ func TestParse_InvalidCalendarDates(t *testing.T) {
 
 	// These pass regex but fail time.Parse due to invalid calendar values.
 	invalids := []string{
-		"2026-02-30",               // Feb 30 doesn't exist (date-only)
-		"2026-02-30T00:00:00",      // Feb 30 doesn't exist (local)
-		"2026-02-30T00:00:00Z",     // Feb 30 doesn't exist (absolute)
+		"2026-02-30",                // Feb 30 doesn't exist (date-only)
+		"2026-02-30T00:00:00",       // Feb 30 doesn't exist (local)
+		"2026-02-30T00:00:00Z",      // Feb 30 doesn't exist (absolute)
 		"2026-04-31T12:00:00+07:00", // Apr 31 doesn't exist
-		"2026-06-31",               // Jun 31 doesn't exist
+		"2026-06-31",                // Jun 31 doesn't exist
 	}
 
 	for _, raw := range invalids {
