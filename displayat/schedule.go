@@ -7,9 +7,12 @@ import (
 )
 
 // ComputeActiveSet returns the items that should be played at the given time
-// when schedule.byDisplayAt is true. See DP-1 Playlist Extension §3.5.3 / §3.5.5.
+// when schedule.byDisplayAt is true. See DP-1 Playlist Extension §3.5.1 / §3.5.3 / §3.5.5.
 //
-// Logic:
+// When schedule is nil or byDisplayAt is not true, returns a copy of all items and ignores
+// displayAt for filtering (§3.5.1; matches dp1-js computeActiveSet).
+//
+// When byDisplayAt is true:
 //  1. Resolve each item’s displayAt to an instant (§3.5.2).
 //  2. Find max displayAt instant among items with resolvable displayAt ≤ now.
 //  3. Return items with displayAt == max instant, plus items with no displayAt field (evergreen).
@@ -25,6 +28,15 @@ import (
 // The loc parameter is used to resolve date-only and local datetime displayAt values
 // (pass the playback device's local timezone).
 func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) []playlist.PlaylistItem {
+	if p == nil {
+		return nil
+	}
+	// §3.5.1: filtering is opt-in; false/absent means play the full list.
+	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
+		out := make([]playlist.PlaylistItem, len(p.Items))
+		copy(out, p.Items)
+		return out
+	}
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -89,6 +101,9 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 // The loc parameter is used to resolve date-only and local datetime displayAt values
 // (pass the playback device's local timezone).
 func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *time.Time {
+	if p == nil {
+		return nil
+	}
 	if loc == nil {
 		loc = time.UTC
 	}
