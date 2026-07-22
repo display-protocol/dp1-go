@@ -291,6 +291,32 @@ func TestComputeActiveSet_PreservesOrder(t *testing.T) {
 	}
 }
 
+func TestComputeActiveSet_DynamicItemsTreatedEvergreen(t *testing.T) {
+	t.Parallel()
+
+	// Composition: after ResolveDynamicQuery strips indexer displayAt (§3.5.6),
+	// dynamic items must stay evergreen even when the indexer sent future/invalid values.
+	p := byDisplayAtPlaylist(
+		makeItem("static", "Day", "https://static.example/day", "2026-07-21T00:00:00Z"),
+		makeItem("dyn-future", "DynFuture", "https://dyn.example/a", ""), // stripped
+		makeItem("dyn-empty", "DynEmpty", "https://dyn.example/b", ""),
+	)
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	active := ComputeActiveSet(p, now, time.UTC)
+	wantIDs := []string{"static", "dyn-future", "dyn-empty"}
+	if len(active) != len(wantIDs) {
+		t.Fatalf("got %d items, want %d", len(active), len(wantIDs))
+	}
+	for i, id := range wantIDs {
+		if active[i].ID != id {
+			t.Fatalf("index %d: got %s, want %s", i, active[i].ID, id)
+		}
+	}
+	if next := NextDisplayAt(p, now, time.UTC); next != nil {
+		t.Fatalf("NextDisplayAt armed from dynamic-only futures: %v", next)
+	}
+}
+
 func TestComputeActiveSet_WithoutByDisplayAtReturnsAll(t *testing.T) {
 	t.Parallel()
 

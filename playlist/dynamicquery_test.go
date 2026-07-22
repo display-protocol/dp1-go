@@ -283,6 +283,53 @@ func TestResolveDynamicQuery_itemMap(t *testing.T) {
 	}
 }
 
+func TestResolveDynamicQuery_stripsIndexerDisplayAt(t *testing.T) {
+	t.Parallel()
+
+	// §3.5.6: indexer displayAt must not survive into scheduling-facing PlaylistItem fields.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+  "items":[
+    {"source":"https://dyn.example/a","displayAt":"2099-01-01T00:00:00Z"},
+    {"source":"https://dyn.example/b","displayAt":"not-a-date"}
+  ]
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source:    "https://static.example/day",
+			DisplayAt: "2026-07-21T00:00:00Z",
+		}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 3 {
+		t.Fatalf("got %d items, want 3", len(out.Items))
+	}
+	if out.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
+		t.Fatalf("static displayAt cleared: %q", out.Items[0].DisplayAt)
+	}
+	for i := 1; i < len(out.Items); i++ {
+		if out.Items[i].DisplayAt != "" {
+			t.Fatalf("dynamic item[%d] kept displayAt %q; want stripped", i, out.Items[i].DisplayAt)
+		}
+	}
+}
+
 func TestResolveDynamicQuery_itemMap_itemsPathDotNotation(t *testing.T) {
 	t.Parallel()
 	// Nested envelope: items live at response.payload.entries; itemMap still maps top-level keys on each row object.

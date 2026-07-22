@@ -96,8 +96,9 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
 // in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
 // (itemsPath, itemMap) to obtain objects, validates each against the core playlist item schema,
-// and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this
-// function when p.DynamicQuery is non-nil.
+// and returns the decoded [PlaylistItem] slice. Indexer `displayAt` is cleared on each
+// item (§3.5.6: dynamic displayAt must not affect scheduling). [Playlist.ResolveDynamicQuery]
+// uses this function when p.DynamicQuery is non-nil.
 //
 // dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
 // checks. client may be nil to use [http.DefaultClient]. opts may be nil for default
@@ -178,6 +179,11 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err := json.Unmarshal(itemJSON, &it); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
+		// §3.5.6: only static (signed) displayAt may affect scheduling/timers. Indexer
+		// displayAt MUST be ignored for active-set membership — clear so helpers that
+		// only see PlaylistItem treat dynamic items as evergreen. Catalog UIs that need
+		// the indexer value should read it from the raw response before resolve.
+		it.DisplayAt = ""
 		out = append(out, it)
 	}
 	return out, nil
