@@ -26,7 +26,7 @@ import (
 // If no items qualify, returns an empty slice.
 //
 // The loc parameter is used to resolve local datetime displayAt values
-// (pass the playback device's local timezone).
+// (pass the display-locale timezone).
 func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) []playlist.PlaylistItem {
 	if p == nil {
 		return nil
@@ -96,12 +96,18 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 // NextDisplayAt returns the smallest displayAt instant that is strictly after now,
 // or nil if there are no future displayAt values.
 //
+// When schedule is nil or byDisplayAt is not true, returns nil (§3.5.1; scheduling is
+// opt-in — matches [ComputeActiveSet] ignoring displayAt for filtering).
+//
 // Unresolvable displayAt values are skipped (they are not timer candidates per §3.5.5).
 //
 // The loc parameter is used to resolve local datetime displayAt values
-// (pass the playback device's local timezone).
+// (pass the display-locale timezone).
 func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *time.Time {
 	if p == nil {
+		return nil
+	}
+	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
 		return nil
 	}
 	if loc == nil {

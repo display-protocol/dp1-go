@@ -291,19 +291,20 @@ func TestComputeActiveSet_PreservesOrder(t *testing.T) {
 	}
 }
 
-func TestComputeActiveSet_DynamicItemsTreatedEvergreen(t *testing.T) {
+func TestComputeActiveSet_DynamicDisplayAtSchedulesLikeStatic(t *testing.T) {
 	t.Parallel()
 
-	// Composition: after ResolveDynamicQuery strips indexer displayAt (§3.5.6),
-	// dynamic items must stay evergreen even when the indexer sent future/invalid values.
+	// §3.5.6: displayAt rules apply the same whether items came from static items or
+	// dynamicQuery (absent → evergreen; future → not yet; invalid string → not eligible).
 	p := byDisplayAtPlaylist(
 		makeItem("static", "Day", "https://static.example/day", "2026-07-21T00:00:00Z"),
-		makeItem("dyn-future", "DynFuture", "https://dyn.example/a", ""), // stripped
+		makeItem("dyn-future", "DynFuture", "https://dyn.example/a", "2099-01-01T00:00:00Z"),
 		makeItem("dyn-empty", "DynEmpty", "https://dyn.example/b", ""),
+		makeItem("dyn-invalid", "DynInvalid", "https://dyn.example/c", "not-a-date"),
 	)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	active := ComputeActiveSet(p, now, time.UTC)
-	wantIDs := []string{"static", "dyn-future", "dyn-empty"}
+	wantIDs := []string{"static", "dyn-empty"}
 	if len(active) != len(wantIDs) {
 		t.Fatalf("got %d items, want %d", len(active), len(wantIDs))
 	}
@@ -312,8 +313,13 @@ func TestComputeActiveSet_DynamicItemsTreatedEvergreen(t *testing.T) {
 			t.Fatalf("index %d: got %s, want %s", i, active[i].ID, id)
 		}
 	}
-	if next := NextDisplayAt(p, now, time.UTC); next != nil {
-		t.Fatalf("NextDisplayAt armed from dynamic-only futures: %v", next)
+	next := NextDisplayAt(p, now, time.UTC)
+	if next == nil {
+		t.Fatal("NextDisplayAt: want future dynamic displayAt as candidate")
+	}
+	wantNext := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !next.Equal(wantNext) {
+		t.Fatalf("NextDisplayAt = %v, want %v", next, wantNext)
 	}
 }
 
@@ -340,17 +346,36 @@ func TestComputeActiveSet_WithoutByDisplayAtReturnsAll(t *testing.T) {
 	}
 }
 
+func TestNextDisplayAt_WithoutByDisplayAtReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	// §3.5.1: absent or false byDisplayAt → no scheduling timers.
+	items := []playlist.PlaylistItem{
+		makeItem("1", "Future", "https://a.com/a", "2026-07-23T00:00:00Z"),
+		makeItem("2", "Evergreen", "https://a.com/b", ""),
+	}
+	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
+
+	p := &playlist.Playlist{Items: items}
+	if next := NextDisplayAt(p, now, time.UTC); next != nil {
+		t.Fatalf("absent schedule: got %v, want nil", next)
+	}
+
+	p.Schedule = &playlists.Schedule{ByDisplayAt: false}
+	if next := NextDisplayAt(p, now, time.UTC); next != nil {
+		t.Fatalf("byDisplayAt=false: got %v, want nil", next)
+	}
+}
+
 func TestNextDisplayAt_Basic(t *testing.T) {
 	t.Parallel()
 
-	p := &playlist.Playlist{
-		Items: []playlist.PlaylistItem{
-			makeItem("0", "Intro", "https://a.com/intro", ""),
-			makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
-			makeItem("2", "Day2", "https://a.com/d2", "2026-07-22T00:00:00"),
-			makeItem("3", "Day3", "https://a.com/d3", "2026-07-23T00:00:00"),
-		},
-	}
+	p := byDisplayAtPlaylist(
+		makeItem("0", "Intro", "https://a.com/intro", ""),
+		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
+		makeItem("2", "Day2", "https://a.com/d2", "2026-07-22T00:00:00"),
+		makeItem("3", "Day3", "https://a.com/d3", "2026-07-23T00:00:00"),
+	)
 
 	loc := time.UTC
 
@@ -414,12 +439,10 @@ func TestNextDisplayAt_Basic(t *testing.T) {
 func TestNextDisplayAt_NoTimedItems(t *testing.T) {
 	t.Parallel()
 
-	p := &playlist.Playlist{
-		Items: []playlist.PlaylistItem{
-			makeItem("0", "A", "https://a.com/a", ""),
-			makeItem("1", "B", "https://a.com/b", ""),
-		},
-	}
+	p := byDisplayAtPlaylist(
+		makeItem("0", "A", "https://a.com/a", ""),
+		makeItem("1", "B", "https://a.com/b", ""),
+	)
 
 	next := NextDisplayAt(p, time.Now(), time.UTC)
 	if next != nil {
@@ -430,12 +453,10 @@ func TestNextDisplayAt_NoTimedItems(t *testing.T) {
 func TestNextDisplayAt_InvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	p := &playlist.Playlist{
-		Items: []playlist.PlaylistItem{
-			makeItem("0", "Invalid", "https://a.com/inv", "not-valid"),
-			makeItem("1", "Valid", "https://a.com/v", "2026-07-25T00:00:00"),
-		},
-	}
+	p := byDisplayAtPlaylist(
+		makeItem("0", "Invalid", "https://a.com/inv", "not-valid"),
+		makeItem("1", "Valid", "https://a.com/v", "2026-07-25T00:00:00"),
+	)
 
 	loc := time.UTC
 	now := time.Date(2026, 7, 20, 0, 0, 0, 0, loc)
@@ -454,13 +475,11 @@ func TestNextDisplayAt_InvalidDisplayAt(t *testing.T) {
 func TestNextDisplayAt_ReturnsSmallest(t *testing.T) {
 	t.Parallel()
 
-	p := &playlist.Playlist{
-		Items: []playlist.PlaylistItem{
-			makeItem("1", "Later", "https://a.com/l", "2026-07-30T00:00:00"),
-			makeItem("2", "Sooner", "https://a.com/s", "2026-07-25T00:00:00"),
-			makeItem("3", "Middle", "https://a.com/m", "2026-07-27T00:00:00"),
-		},
-	}
+	p := byDisplayAtPlaylist(
+		makeItem("1", "Later", "https://a.com/l", "2026-07-30T00:00:00"),
+		makeItem("2", "Sooner", "https://a.com/s", "2026-07-25T00:00:00"),
+		makeItem("3", "Middle", "https://a.com/m", "2026-07-27T00:00:00"),
+	)
 
 	loc := time.UTC
 	now := time.Date(2026, 7, 20, 0, 0, 0, 0, loc)
@@ -523,12 +542,10 @@ func TestComputeActiveSet_NilLocation(t *testing.T) {
 func TestNextDisplayAt_NilLocation(t *testing.T) {
 	t.Parallel()
 
-	p := &playlist.Playlist{
-		Items: []playlist.PlaylistItem{
-			makeItem("0", "Intro", "https://a.com/intro", ""),
-			makeItem("1", "Day1", "https://a.com/d1", "2026-07-25T00:00:00"),
-		},
-	}
+	p := byDisplayAtPlaylist(
+		makeItem("0", "Intro", "https://a.com/intro", ""),
+		makeItem("1", "Day1", "https://a.com/d1", "2026-07-25T00:00:00"),
+	)
 
 	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 

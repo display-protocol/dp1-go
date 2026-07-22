@@ -138,7 +138,7 @@ prefs, err := merge.DisplayForItem(def, refManifest, item)
 
 Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, `Schedule` / `byDisplayAt`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`, plus item-level `displayAt`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
 
-Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute the active set when `schedule.byDisplayAt` is true.
+Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute eligible items when `schedule.byDisplayAt` is true. Per §3.5.6, the same rules apply whether items came from static `items` or `dynamicQuery`.
 
 ## Schemas
 

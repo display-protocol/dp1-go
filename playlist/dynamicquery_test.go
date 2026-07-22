@@ -283,76 +283,99 @@ func TestResolveDynamicQuery_itemMap(t *testing.T) {
 	}
 }
 
-func TestResolveDynamicQuery_stripsIndexerDisplayAt(t *testing.T) {
+func TestResolveDynamicQuery_keepsStringDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	// §3.5.6 / §4.5: indexer displayAt (any JSON type) must be ignored and must not
-	// reject an otherwise-valid dynamic item.
-	cases := []struct {
-		name string
-		body string
-	}{
-		{
-			name: "string_future_and_invalid",
-			body: `{
+	// §3.5.6: displayAt on dynamic items is retained; scheduling is independent of sourcing.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
   "items":[
     {"source":"https://dyn.example/a","displayAt":"2099-01-01T00:00:00Z"},
-    {"source":"https://dyn.example/b","displayAt":"not-a-date"}
+    {"source":"https://dyn.example/b","displayAt":"not-a-date"},
+    {"source":"https://dyn.example/c"}
   ]
-}`,
-		},
-		{
-			name: "non_string_types",
-			body: `{
-  "items":[
-    {"source":"https://dyn.example/n","displayAt":123},
-    {"source":"https://dyn.example/b","displayAt":true},
-    {"source":"https://dyn.example/o","displayAt":{"when":"later"}}
-  ]
-}`,
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source:    "https://static.example/day",
+			DisplayAt: "2026-07-21T00:00:00Z",
+		}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
 		},
 	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
+		t.Fatalf("static displayAt cleared: %q", out.Items[0].DisplayAt)
+	}
+	if out.Items[1].DisplayAt != "2099-01-01T00:00:00Z" {
+		t.Fatalf("dynamic string displayAt dropped: %q", out.Items[1].DisplayAt)
+	}
+	if out.Items[2].DisplayAt != "not-a-date" {
+		t.Fatalf("invalid string displayAt dropped: %q", out.Items[2].DisplayAt)
+	}
+	if out.Items[3].DisplayAt != "" {
+		t.Fatalf("absent displayAt became %q", out.Items[3].DisplayAt)
+	}
+}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.WriteString(w, tc.body)
-			}))
-			t.Cleanup(srv.Close)
+func TestResolveDynamicQuery_rejectsNonStringDisplayAt(t *testing.T) {
+	t.Parallel()
 
-			p := &Playlist{
-				DPVersion: "1.1.0",
-				Title:     "t",
-				Items: []PlaylistItem{{
-					Source:    "https://static.example/day",
-					DisplayAt: "2026-07-21T00:00:00Z",
-				}},
-				DynamicQuery: &playlists.DynamicQuery{
-					Profile:  ProfileHTTPSJSONV1,
-					Endpoint: srv.URL,
-					ResponseMapping: playlists.ResponseMapping{
-						ItemsPath:  "items",
-						ItemSchema: "dp1/1.1",
-					},
-				},
-			}
-			out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
-				t.Fatalf("static displayAt cleared: %q", out.Items[0].DisplayAt)
-			}
-			for i := 1; i < len(out.Items); i++ {
-				if out.Items[i].DisplayAt != "" {
-					t.Fatalf("dynamic item[%d] kept displayAt %q; want stripped", i, out.Items[i].DisplayAt)
-				}
-				if out.Items[i].Source == "" {
-					t.Fatalf("dynamic item[%d] lost source", i)
-				}
-			}
-		})
+	// §4.5 / §4.6.2: non-string displayAt is invalid → discard that item; keep valid ones.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+  "items":[
+    {"source":"https://dyn.example/ok","displayAt":"2099-01-01T00:00:00Z"},
+    {"source":"https://dyn.example/n","displayAt":123},
+    {"source":"https://dyn.example/b","displayAt":true},
+    {"source":"https://dyn.example/o","displayAt":{"when":"later"}},
+    {"source":"https://dyn.example/plain"}
+  ]
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source: "https://static.example/day",
+		}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 3 {
+		t.Fatalf("got %d items, want 3 (static + 2 accepted dynamic)", len(out.Items))
+	}
+	if out.Items[1].Source != "https://dyn.example/ok" || out.Items[1].DisplayAt != "2099-01-01T00:00:00Z" {
+		t.Fatalf("unexpected accepted dynamic[0]: %+v", out.Items[1])
+	}
+	if out.Items[2].Source != "https://dyn.example/plain" || out.Items[2].DisplayAt != "" {
+		t.Fatalf("unexpected accepted dynamic[1]: %+v", out.Items[2])
 	}
 }
 

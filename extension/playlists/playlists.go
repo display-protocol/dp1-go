@@ -4,8 +4,8 @@ package playlists
 import "github.com/display-protocol/dp1-go/extension/identity"
 
 // Schedule holds playlist-level scheduling controls (DP-1 Playlist Extension §3.5).
-// When ByDisplayAt is true, the device control layer filters items to an active set
-// based on each item's DisplayAt and pushes only that set to the player.
+// When ByDisplayAt is true, playback includes only the current release (latest past
+// displayAt instant) plus items without displayAt.
 type Schedule struct {
 	ByDisplayAt bool `json:"byDisplayAt,omitempty"`
 }
