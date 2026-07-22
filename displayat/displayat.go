@@ -7,6 +7,9 @@
 //
 // Parsing resolves date-only and local datetime relative to a provided location (device local);
 // absolute forms resolve to exact UTC instants.
+//
+// DST gap/fold for timezone-less values follow §3.5.2: gap → first valid local instant after
+// the gap; fold → earlier of the two ambiguous instants.
 package displayat
 
 import (
@@ -91,22 +94,136 @@ func Parse(raw string, loc *time.Location) Parsed {
 		if len(raw) > 19 {
 			layout = "2006-01-02T15:04:05.999999999"
 		}
-		t, err := time.ParseInLocation(layout, raw, loc)
+		// Parse as UTC to extract calendar/clock components without applying loc yet.
+		// time.Parse rejects invalid calendar dates; DST gap/fold are handled in resolveLocalWall.
+		wall, err := time.Parse(layout, raw)
 		if err != nil {
 			return Parsed{Kind: KindInvalid, Raw: raw}
 		}
-		return Parsed{Kind: KindLocal, Raw: raw, Resolved: t}
+		y, m, d := wall.Date()
+		hh, mm, ss := wall.Clock()
+		resolved := resolveLocalWall(y, m, d, hh, mm, ss, wall.Nanosecond(), loc)
+		return Parsed{Kind: KindLocal, Raw: raw, Resolved: resolved}
 
 	case dateOnlyRE.MatchString(raw):
-		t, err := time.ParseInLocation("2006-01-02", raw, loc)
+		wall, err := time.Parse("2006-01-02", raw)
 		if err != nil {
 			return Parsed{Kind: KindInvalid, Raw: raw}
 		}
-		return Parsed{Kind: KindDateOnly, Raw: raw, Resolved: t}
+		y, m, d := wall.Date()
+		resolved := resolveLocalWall(y, m, d, 0, 0, 0, 0, loc)
+		return Parsed{Kind: KindDateOnly, Raw: raw, Resolved: resolved}
 
 	default:
 		return Parsed{Kind: KindInvalid, Raw: raw}
 	}
+}
+
+// resolveLocalWall resolves a timezone-less wall time in loc per DP-1 §3.5.2:
+//   - Gap (spring-forward; local time does not exist): first valid local instant after the gap.
+//   - Fold (fall-back; local time occurs twice): earlier of the two ambiguous instants.
+//
+// time.Date / ParseInLocation alone are not sufficient: on gap times, Go currently maps into
+// the pre-transition offset (wrong for §3.5.2).
+func resolveLocalWall(year int, month time.Month, day, hour, min, sec, nsec int, loc *time.Location) time.Time {
+	candidates := wallUTCCandidates(year, month, day, hour, min, sec, nsec, loc)
+	switch len(candidates) {
+	case 0:
+		return firstInstantAfterGap(year, month, day, loc)
+	case 1:
+		return candidates[0]
+	default:
+		earliest := candidates[0]
+		for _, c := range candidates[1:] {
+			if c.Before(earliest) {
+				earliest = c
+			}
+		}
+		return earliest
+	}
+}
+
+// wallUTCCandidates returns distinct instants in loc that display as the given wall clock.
+// Zero candidates means the wall time falls in a DST gap; two means a fold.
+func wallUTCCandidates(year int, month time.Month, day, hour, min, sec, nsec int, loc *time.Location) []time.Time {
+	offsets := nearbyOffsets(year, month, day, loc)
+	seen := make(map[int64]struct{}, len(offsets))
+	out := make([]time.Time, 0, len(offsets))
+	for _, off := range offsets {
+		fz := time.FixedZone("", off)
+		nominal := time.Date(year, month, day, hour, min, sec, nsec, fz)
+		got := nominal.UTC().In(loc)
+		if !sameWall(got, year, month, day, hour, min, sec) || got.Nanosecond() != nsec {
+			continue
+		}
+		key := got.UnixNano()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, got)
+	}
+	return out
+}
+
+// nearbyOffsets collects timezone offsets around the given civil day (day±1 noon and midnight).
+func nearbyOffsets(year int, month time.Month, day int, loc *time.Location) []int {
+	points := []time.Time{
+		time.Date(year, month, day, 0, 0, 0, 0, loc),
+		time.Date(year, month, day, 12, 0, 0, 0, loc),
+		time.Date(year, month, day, 23, 0, 0, 0, loc),
+		time.Date(year, month, day, 12, 0, 0, 0, loc).Add(-24 * time.Hour),
+		time.Date(year, month, day, 12, 0, 0, 0, loc).Add(24 * time.Hour),
+	}
+	seen := make(map[int]struct{}, len(points))
+	out := make([]int, 0, len(points))
+	for _, p := range points {
+		_, off := p.Zone()
+		if _, ok := seen[off]; ok {
+			continue
+		}
+		seen[off] = struct{}{}
+		out = append(out, off)
+	}
+	return out
+}
+
+// firstInstantAfterGap returns the first valid local instant after the spring-forward gap
+// on the given civil day in loc. Used when the requested wall time does not exist.
+//
+// Do not anchor at local midnight of the target day: in zones where the gap includes
+// midnight (e.g. America/Havana 00:00→01:00), time.Date(..., 0,0,0, loc) itself lands
+// in the gap and Go maps it to the previous evening, which breaks a forward-only SOD scan.
+func firstInstantAfterGap(year int, month time.Month, day int, loc *time.Location) time.Time {
+	// Noon on the previous civil day is a stable pre-transition anchor.
+	anchor := time.Date(year, month, day, 12, 0, 0, 0, loc).Add(-24 * time.Hour)
+	prev := anchor
+	for i := 1; i <= 36*3600; i++ {
+		cur := anchor.Add(time.Duration(i) * time.Second)
+		prevSOD := secondsOfDay(prev.In(loc))
+		curSOD := secondsOfDay(cur.In(loc))
+		normalStep := curSOD == prevSOD+1
+		// Civil midnight without a DST gap: 23:59:59 → 00:00:00.
+		normalMidnight := prevSOD == 23*3600+59*60+59 && curSOD == 0
+		if !normalStep && !normalMidnight {
+			// Spring-forward discontinuity (e.g. 01:59:59→03:00:00 or 23:59:59→01:00:00).
+			return cur.In(loc)
+		}
+		prev = cur
+	}
+	// Fallback: should be unreachable for real IANA zones with a spring-forward gap.
+	return time.Date(year, month, day, 12, 0, 0, 0, loc)
+}
+
+func sameWall(t time.Time, year int, month time.Month, day, hour, min, sec int) bool {
+	y, m, d := t.Date()
+	h, mi, s := t.Clock()
+	return y == year && m == month && d == day && h == hour && mi == min && s == sec
+}
+
+func secondsOfDay(t time.Time) int {
+	h, m, s := t.Clock()
+	return h*3600 + m*60 + s
 }
 
 // MustParse is like Parse but panics on invalid input. Useful for tests.

@@ -258,3 +258,78 @@ func TestParse_InvalidCalendarDates(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_DSTGapAndFold(t *testing.T) {
+	t.Parallel()
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	t.Run("gap_spring_forward", func(t *testing.T) {
+		t.Parallel()
+		// 2026-03-08: clocks spring forward 02:00 → 03:00. 02:30 does not exist.
+		// §3.5.2: resolve to the first valid local instant after the gap (03:00 EDT).
+		p := Parse("2026-03-08T02:30:00", loc)
+		if !p.IsValid() || p.Kind != KindLocal {
+			t.Fatalf("Parse gap: kind=%v valid=%v", p.Kind, p.IsValid())
+		}
+		got := p.Resolved.In(loc).Format(time.RFC3339)
+		want := "2026-03-08T03:00:00-04:00"
+		if got != want {
+			t.Fatalf("gap resolve: got %s, want %s (unix=%d)", got, want, p.Resolved.Unix())
+		}
+		// Any wall time inside the gap maps to the same post-gap instant.
+		p2 := Parse("2026-03-08T02:00:00", loc)
+		if !p2.Resolved.Equal(p.Resolved) {
+			t.Fatalf("gap start vs mid: %v vs %v", p2.Resolved, p.Resolved)
+		}
+	})
+
+	t.Run("fold_fall_back", func(t *testing.T) {
+		t.Parallel()
+		// 2025-11-02: clocks fall back 02:00 → 01:00. 01:30 occurs twice.
+		// §3.5.2: resolve to the earlier ambiguous instant (EDT, -04:00).
+		p := Parse("2025-11-02T01:30:00", loc)
+		if !p.IsValid() || p.Kind != KindLocal {
+			t.Fatalf("Parse fold: kind=%v valid=%v", p.Kind, p.IsValid())
+		}
+		got := p.Resolved.In(loc).Format(time.RFC3339)
+		want := "2025-11-02T01:30:00-04:00"
+		if got != want {
+			t.Fatalf("fold resolve: got %s, want %s (unix=%d)", got, want, p.Resolved.Unix())
+		}
+		name, off := p.Resolved.Zone()
+		if name != "EDT" || off != -4*3600 {
+			t.Fatalf("fold zone: got %s off=%d, want EDT/-14400", name, off)
+		}
+	})
+}
+
+func TestParse_DSTGapMidnight(t *testing.T) {
+	t.Parallel()
+
+	// America/Havana springs forward at midnight (00:00 → 01:00) on 2026-03-08.
+	// This catches the anchor bug where time.Date(midnight) itself falls in the gap.
+	loc, err := time.LoadLocation("America/Havana")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	want := "2026-03-08T01:00:00-04:00"
+	for _, raw := range []string{
+		"2026-03-08T00:00:00",
+		"2026-03-08T00:30:00",
+		"2026-03-08", // date-only = local midnight, also in the gap
+	} {
+		p := Parse(raw, loc)
+		if !p.IsValid() {
+			t.Fatalf("Parse(%q): expected valid gap resolution", raw)
+		}
+		got := p.Resolved.In(loc).Format(time.RFC3339)
+		if got != want {
+			t.Fatalf("Parse(%q): got %s, want %s (unix=%d)", raw, got, want, p.Resolved.Unix())
+		}
+	}
+}

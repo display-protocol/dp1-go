@@ -187,8 +187,8 @@ func TestComputeActiveSet_InvalidDisplayAt(t *testing.T) {
 	now := time.Date(2026, 7, 21, 10, 0, 0, 0, loc)
 
 	active := ComputeActiveSet(p, now, loc)
-	// Invalid displayAt treated as evergreen (no displayAt).
-	wantIDs := []string{"0", "1", "2"}
+	// Present but unresolvable displayAt is excluded — not evergreen (§3.5.5).
+	wantIDs := []string{"0", "2"}
 
 	gotIDs := make([]string, len(active))
 	for i, it := range active {
@@ -197,6 +197,46 @@ func TestComputeActiveSet_InvalidDisplayAt(t *testing.T) {
 
 	if len(gotIDs) != len(wantIDs) {
 		t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+		}
+	}
+}
+
+func TestComputeActiveSet_CalendarInvalidDisplayAt(t *testing.T) {
+	t.Parallel()
+
+	// Schema patterns are syntactic only; 2026-02-30 matches the date regex but is
+	// calendar-invalid. Per §3.5.5 it must be excluded (not treated as evergreen).
+	p := &playlist.Playlist{
+		Items: []playlist.PlaylistItem{
+			makeItem("0", "Intro", "https://a.com/intro", ""),
+			makeItem("1", "BadCal", "https://a.com/bad", "2026-02-30"),
+			makeItem("2", "BadLocal", "https://a.com/badlocal", "2026-02-30T00:00:00"),
+			makeItem("3", "Valid", "https://a.com/v", "2026-07-21T00:00:00"),
+		},
+	}
+
+	loc := time.UTC
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, loc)
+
+	active := ComputeActiveSet(p, now, loc)
+	wantIDs := []string{"0", "3"}
+
+	gotIDs := make([]string, len(active))
+	for i, it := range active {
+		gotIDs[i] = it.ID
+	}
+
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+		}
 	}
 }
 
