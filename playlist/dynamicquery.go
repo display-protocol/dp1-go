@@ -96,9 +96,10 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
 // in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
 // (itemsPath, itemMap) to obtain objects, validates each against the core playlist item schema,
-// and returns the decoded [PlaylistItem] slice. Indexer `displayAt` is cleared on each
-// item (§3.5.6: dynamic displayAt must not affect scheduling). [Playlist.ResolveDynamicQuery]
-// uses this function when p.DynamicQuery is non-nil.
+// and returns the decoded [PlaylistItem] slice. Indexer `displayAt` is stripped from each
+// item before validate/unmarshal (§3.5.6 / §4.5: must ignore for scheduling and must not
+// reject otherwise-valid items). [Playlist.ResolveDynamicQuery] uses this when
+// p.DynamicQuery is non-nil.
 //
 // dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
 // checks. client may be nil to use [http.DefaultClient]. opts may be nil for default
@@ -172,6 +173,13 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err != nil {
 			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
 		}
+		// §3.5.6 / §4.5: indexer displayAt MUST NOT reject an otherwise-valid item and
+		// MUST NOT affect scheduling. Remove before validate/unmarshal so wrong types
+		// (number/bool/object) cannot fail json.Unmarshal into PlaylistItem.DisplayAt.
+		itemJSON, err = stripDynamicDisplayAt(itemJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
+		}
 		if err := validate.PlaylistItem(itemJSON); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
@@ -179,14 +187,19 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err := json.Unmarshal(itemJSON, &it); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
-		// §3.5.6: only static (signed) displayAt may affect scheduling/timers. Indexer
-		// displayAt MUST be ignored for active-set membership — clear so helpers that
-		// only see PlaylistItem treat dynamic items as evergreen. Catalog UIs that need
-		// the indexer value should read it from the raw response before resolve.
-		it.DisplayAt = ""
 		out = append(out, it)
 	}
 	return out, nil
+}
+
+// stripDynamicDisplayAt removes top-level displayAt from a mapped dynamic item JSON object.
+func stripDynamicDisplayAt(itemJSON []byte) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(itemJSON, &obj); err != nil {
+		return nil, err
+	}
+	delete(obj, "displayAt")
+	return json.Marshal(obj)
 }
 
 // HydrateDynamicQueryString replaces {{name}} placeholders using params. If query is empty,
