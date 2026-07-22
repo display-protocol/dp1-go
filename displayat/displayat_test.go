@@ -333,3 +333,45 @@ func TestParse_DSTGapMidnight(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_FullDayZoneSkip(t *testing.T) {
+	t.Parallel()
+
+	// Pacific/Apia skipped 2011-12-30 when moving west of the IDL (§3.5.2 gap →
+	// first valid local instant after the gap = 2011-12-31T00:00:00+14:00).
+	loc, err := time.LoadLocation("Pacific/Apia")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	want := "2011-12-31T00:00:00+14:00"
+	for _, raw := range []string{
+		"2011-12-30",
+		"2011-12-30T00:00:00",
+		"2011-12-30T12:00:00",
+	} {
+		p := Parse(raw, loc)
+		if !p.IsValid() {
+			t.Fatalf("Parse(%q): expected valid gap resolution", raw)
+		}
+		got := p.Resolved.In(loc).Format(time.RFC3339)
+		if got != want {
+			t.Fatalf("Parse(%q): got %s, want %s (unix=%d)", raw, got, want, p.Resolved.Unix())
+		}
+	}
+
+	// Adjacent real days must still resolve to themselves.
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{"2011-12-29", "2011-12-29T00:00:00-10:00"},
+		{"2011-12-31", "2011-12-31T00:00:00+14:00"},
+	} {
+		p := Parse(tc.raw, loc)
+		got := p.Resolved.In(loc).Format(time.RFC3339)
+		if got != tc.want {
+			t.Fatalf("Parse(%q): got %s, want %s", tc.raw, got, tc.want)
+		}
+	}
+}

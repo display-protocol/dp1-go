@@ -200,19 +200,35 @@ func firstInstantAfterGap(year int, month time.Month, day int, loc *time.Locatio
 	prev := anchor
 	for i := 1; i <= 36*3600; i++ {
 		cur := anchor.Add(time.Duration(i) * time.Second)
-		prevSOD := secondsOfDay(prev.In(loc))
-		curSOD := secondsOfDay(cur.In(loc))
+		prevLocal := prev.In(loc)
+		curLocal := cur.In(loc)
+		prevSOD := secondsOfDay(prevLocal)
+		curSOD := secondsOfDay(curLocal)
 		normalStep := curSOD == prevSOD+1
-		// Civil midnight without a DST gap: 23:59:59 → 00:00:00.
-		normalMidnight := prevSOD == 23*3600+59*60+59 && curSOD == 0
-		if !normalStep && !normalMidnight {
-			// Spring-forward discontinuity (e.g. 01:59:59→03:00:00 or 23:59:59→01:00:00).
-			return cur.In(loc)
+		if !normalStep && !isNormalCivilMidnight(prevLocal, curLocal, prevSOD, curSOD) {
+			// Spring-forward / day-skip discontinuity
+			// (e.g. 01:59:59→03:00:00, 23:59:59→01:00:00, or IDL day skip).
+			return curLocal
 		}
 		prev = cur
 	}
 	// Fallback: should be unreachable for real IANA zones with a spring-forward gap.
 	return time.Date(year, month, day, 12, 0, 0, 0, loc)
+}
+
+// isNormalCivilMidnight reports a routine 23:59:59 → 00:00:00 step where the civil
+// calendar advances by exactly one day. Full-day zone skips (e.g. Pacific/Apia
+// 2011-12-29 → 2011-12-31) have the same SOD wrap but must be treated as gaps.
+func isNormalCivilMidnight(prev, cur time.Time, prevSOD, curSOD int) bool {
+	if prevSOD != 23*3600+59*60+59 || curSOD != 0 {
+		return false
+	}
+	py, pm, pd := prev.Date()
+	cy, cm, cd := cur.Date()
+	// Date arithmetic in UTC avoids location remapping while comparing civil days.
+	next := time.Date(py, pm, pd, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	ey, em, ed := next.Date()
+	return cy == ey && cm == em && cd == ed
 }
 
 func sameWall(t time.Time, year int, month time.Month, day, hour, min, sec int) bool {
