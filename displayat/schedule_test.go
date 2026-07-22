@@ -423,3 +423,46 @@ func TestComputeActiveSet_DateOnlyLocal(t *testing.T) {
 		t.Errorf("NY: expected 1 item (Intro only), got %d", len(activeNY))
 	}
 }
+
+func TestComputeActiveSet_NilLocation(t *testing.T) {
+	t.Parallel()
+
+	p := &playlist.Playlist{
+		Items: []playlist.PlaylistItem{
+			makeItem("0", "Intro", "https://a.com/intro", ""),
+			makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
+		},
+	}
+
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+
+	// nil location should default to UTC.
+	active := ComputeActiveSet(p, now, nil)
+	if len(active) != 2 {
+		t.Errorf("expected 2 items, got %d", len(active))
+	}
+}
+
+func TestNextDisplayAt_NilLocation(t *testing.T) {
+	t.Parallel()
+
+	p := &playlist.Playlist{
+		Items: []playlist.PlaylistItem{
+			makeItem("0", "Intro", "https://a.com/intro", ""),
+			makeItem("1", "Day1", "https://a.com/d1", "2026-07-25T00:00:00"),
+		},
+	}
+
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+
+	// nil location should default to UTC.
+	next := NextDisplayAt(p, now, nil)
+	if next == nil {
+		t.Fatal("got nil, want non-nil")
+	}
+	want := "2026-07-25T00:00:00Z"
+	got := next.UTC().Format(time.RFC3339)
+	if got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}

@@ -196,3 +196,65 @@ func TestMustParse_Valid(t *testing.T) {
 		t.Errorf("got kind %v, want KindDateOnly", p.Kind)
 	}
 }
+
+func TestParse_NilLocation(t *testing.T) {
+	t.Parallel()
+
+	// When loc is nil, should default to UTC.
+	p := Parse("2026-07-21", nil)
+	if p.Kind != KindDateOnly {
+		t.Errorf("got kind %v, want KindDateOnly", p.Kind)
+	}
+	// Should resolve to midnight UTC.
+	want := "2026-07-21T00:00:00Z"
+	got := p.Resolved.UTC().Format(time.RFC3339)
+	if got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestParse_AbsoluteWithFractionalAndOffset(t *testing.T) {
+	t.Parallel()
+
+	// Fractional seconds with offset (uses fallback layout).
+	tests := []struct {
+		raw     string
+		wantUTC string
+	}{
+		{"2026-07-21T12:30:45.123456+07:00", "2026-07-21T05:30:45Z"},
+		{"2026-07-21T00:00:00.999-05:00", "2026-07-21T05:00:00Z"},
+		{"2026-07-21T23:59:59.1+00:00", "2026-07-21T23:59:59Z"},
+	}
+
+	for _, tc := range tests {
+		p := Parse(tc.raw, nil)
+		if p.Kind != KindAbsolute {
+			t.Errorf("Parse(%q): got kind %v, want KindAbsolute", tc.raw, p.Kind)
+			continue
+		}
+		got := p.Resolved.UTC().Format("2006-01-02T15:04:05Z")
+		if got != tc.wantUTC {
+			t.Errorf("Parse(%q): got %s, want %s", tc.raw, got, tc.wantUTC)
+		}
+	}
+}
+
+func TestParse_InvalidCalendarDates(t *testing.T) {
+	t.Parallel()
+
+	// These pass regex but fail time.Parse due to invalid calendar values.
+	invalids := []string{
+		"2026-02-30",               // Feb 30 doesn't exist (date-only)
+		"2026-02-30T00:00:00",      // Feb 30 doesn't exist (local)
+		"2026-02-30T00:00:00Z",     // Feb 30 doesn't exist (absolute)
+		"2026-04-31T12:00:00+07:00", // Apr 31 doesn't exist
+		"2026-06-31",               // Jun 31 doesn't exist
+	}
+
+	for _, raw := range invalids {
+		p := Parse(raw, time.UTC)
+		if p.IsValid() {
+			t.Errorf("Parse(%q): expected invalid for bad calendar date, got %v", raw, p.Kind)
+		}
+	}
+}
