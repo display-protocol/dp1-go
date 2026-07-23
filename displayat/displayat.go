@@ -177,56 +177,52 @@ func nearbyOffsets(year int, month time.Month, day int, loc *time.Location) []in
 
 // firstInstantAfterGap returns the first valid local instant after the spring-forward gap
 // on the given civil day in loc. Used when the requested wall time does not exist.
-//
-// Do not anchor at local midnight of the target day: in zones where the gap includes
-// midnight (e.g. America/Havana 00:00→01:00), time.Date(..., 0,0,0, loc) itself lands
-// in the gap and Go maps it to the previous evening, which breaks a forward-only SOD scan.
 func firstInstantAfterGap(year int, month time.Month, day int, loc *time.Location) time.Time {
-	// Noon on the previous civil day is a stable pre-transition anchor.
+	// Noon on the previous civil day is a stable pre-transition anchor, including
+	// zones whose spring-forward gap starts at local midnight.
+	const searchWindow = 36 * time.Hour
+	const coarseStep = time.Hour
 	anchor := time.Date(year, month, day, 12, 0, 0, 0, loc).Add(-24 * time.Hour)
 	prev := anchor
-	for i := 1; i <= 36*3600; i++ {
-		cur := anchor.Add(time.Duration(i) * time.Second)
-		prevLocal := prev.In(loc)
-		curLocal := cur.In(loc)
-		prevSOD := secondsOfDay(prevLocal)
-		curSOD := secondsOfDay(curLocal)
-		normalStep := curSOD == prevSOD+1
-		if !normalStep && !isNormalCivilMidnight(prevLocal, curLocal, prevSOD, curSOD) {
-			// Spring-forward / day-skip discontinuity
-			// (e.g. 01:59:59→03:00:00, 23:59:59→01:00:00, or IDL day skip).
-			return curLocal
+	prevOffset := offsetAt(prev, loc)
+	end := anchor.Add(searchWindow)
+
+	for cur := anchor.Add(coarseStep); !cur.After(end); cur = cur.Add(coarseStep) {
+		curOffset := offsetAt(cur, loc)
+		if curOffset > prevOffset {
+			return firstInstantWithOffset(prev, cur, curOffset, loc)
 		}
+		prevOffset = curOffset
 		prev = cur
 	}
+
 	// Fallback: should be unreachable for real IANA zones with a spring-forward gap.
 	return time.Date(year, month, day, 12, 0, 0, 0, loc)
 }
 
-// isNormalCivilMidnight reports a routine 23:59:59 → 00:00:00 step where the civil
-// calendar advances by exactly one day. Full-day zone skips (e.g. Pacific/Apia
-// 2011-12-29 → 2011-12-31) have the same SOD wrap but must be treated as gaps.
-func isNormalCivilMidnight(prev, cur time.Time, prevSOD, curSOD int) bool {
-	if prevSOD != 23*3600+59*60+59 || curSOD != 0 {
-		return false
+func firstInstantWithOffset(lo, hi time.Time, targetOffset int, loc *time.Location) time.Time {
+	loUnix := lo.Unix()
+	hiUnix := hi.Unix()
+	for hiUnix-loUnix > 1 {
+		midUnix := loUnix + (hiUnix-loUnix)/2
+		if offsetAt(time.Unix(midUnix, 0), loc) >= targetOffset {
+			hiUnix = midUnix
+		} else {
+			loUnix = midUnix
+		}
 	}
-	py, pm, pd := prev.Date()
-	cy, cm, cd := cur.Date()
-	// Date arithmetic in UTC avoids location remapping while comparing civil days.
-	next := time.Date(py, pm, pd, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
-	ey, em, ed := next.Date()
-	return cy == ey && cm == em && cd == ed
+	return time.Unix(hiUnix, 0).In(loc)
+}
+
+func offsetAt(t time.Time, loc *time.Location) int {
+	_, offset := t.In(loc).Zone()
+	return offset
 }
 
 func sameWall(t time.Time, year int, month time.Month, day, hour, min, sec int) bool {
 	y, m, d := t.Date()
 	h, mi, s := t.Clock()
 	return y == year && m == month && d == day && h == hour && mi == min && s == sec
-}
-
-func secondsOfDay(t time.Time) int {
-	h, m, s := t.Clock()
-	return h*3600 + m*60 + s
 }
 
 // MustParse is like Parse but panics on invalid input. Useful for tests.

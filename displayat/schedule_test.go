@@ -1,6 +1,7 @@
 package displayat
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -129,6 +130,44 @@ func TestComputeActiveSet_MultipleItemsSameDisplayAt(t *testing.T) {
 		if id != wantIDs[i] {
 			t.Errorf("index %d: got %s, want %s", i, id, wantIDs[i])
 		}
+	}
+}
+
+func TestSchedule_ManyItemsSameDSTGap(t *testing.T) {
+	t.Parallel()
+
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+
+	items := []playlist.PlaylistItem{
+		makeItem("evergreen", "Evergreen", "https://a.com/evergreen", ""),
+	}
+	for i := 0; i < 256; i++ {
+		id := fmt.Sprintf("gap-%03d", i)
+		items = append(items, makeItem(id, "Gap item", "https://a.com/"+id, "2026-03-08T02:30:00"))
+	}
+	p := byDisplayAtPlaylist(items...)
+
+	now := time.Date(2026, 3, 8, 3, 1, 0, 0, loc)
+	active := ComputeActiveSet(p, now, loc)
+	if len(active) != len(items) {
+		t.Fatalf("active count = %d, want %d", len(active), len(items))
+	}
+	for i, it := range active {
+		if it.ID != items[i].ID {
+			t.Fatalf("active[%d] = %s, want %s", i, it.ID, items[i].ID)
+		}
+	}
+
+	beforeGap := time.Date(2026, 3, 8, 1, 0, 0, 0, loc)
+	next := NextDisplayAt(p, beforeGap, loc)
+	if next == nil {
+		t.Fatal("NextDisplayAt = nil, want first instant after DST gap")
+	}
+	if got, want := next.In(loc).Format(time.RFC3339), "2026-03-08T03:00:00-04:00"; got != want {
+		t.Fatalf("NextDisplayAt = %s, want %s", got, want)
 	}
 }
 
