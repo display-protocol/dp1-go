@@ -417,6 +417,25 @@ func TestPlaylistItem_OK_and_invalid(t *testing.T) {
 	assertErrValidation(t, PlaylistItem([]byte(`{}`)))
 }
 
+func TestPlaylistItemWithPlaylistsExtension_OK_and_displayAt(t *testing.T) {
+	t.Parallel()
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21T00:00:00Z"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21T00:00:00"}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":null}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":""}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"not-a-date"}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21"}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":123}`)))
+}
+
 func assertErrValidation(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
