@@ -530,6 +530,10 @@ func clonePlaylist(p *Playlist) *Playlist {
 		if len(c.Items[i].Override) > 0 {
 			c.Items[i].Override = append(json.RawMessage(nil), c.Items[i].Override...)
 		}
+		if c.Items[i].DisplayAt != nil {
+			s := *c.Items[i].DisplayAt
+			c.Items[i].DisplayAt = &s
+		}
 	}
 	return &c
 }

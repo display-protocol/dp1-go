@@ -1001,8 +1001,9 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 		},
 		Items: []PlaylistItem{
 			{
-				Source:   "https://static",
-				Override: json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				Source:    "https://static",
+				DisplayAt: strPtr("2026-07-21T00:00:00Z"),
+				Override:  json.RawMessage(`{"display":{"scaling":"fill"}}`),
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -1034,6 +1035,16 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	out.Schedule.ByDisplayAt = false
 	if !orig.Schedule.ByDisplayAt {
 		t.Fatal("mutating cloned schedule must not change original")
+	}
+	if out.Items[0].DisplayAt == nil || orig.Items[0].DisplayAt == nil {
+		t.Fatal("expected displayAt on static item")
+	}
+	if out.Items[0].DisplayAt == orig.Items[0].DisplayAt {
+		t.Fatal("expected cloned item displayAt pointer")
+	}
+	*out.Items[0].DisplayAt = "2099-01-01T00:00:00Z"
+	if *orig.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
+		t.Fatal("mutating cloned displayAt must not change original")
 	}
 	if len(out.Signatures) != len(orig.Signatures) || &out.Signatures[0] == &orig.Signatures[0] {
 		t.Fatal("expected cloned signatures slice")
