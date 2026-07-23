@@ -8,13 +8,18 @@ import (
 	"github.com/display-protocol/dp1-go/playlist"
 )
 
+func strPtr(s string) *string { return &s }
+
 func makeItem(id, title, source, displayAt string) playlist.PlaylistItem {
-	return playlist.PlaylistItem{
-		ID:        id,
-		Title:     title,
-		Source:    source,
-		DisplayAt: displayAt,
+	it := playlist.PlaylistItem{
+		ID:     id,
+		Title:  title,
+		Source: source,
 	}
+	if displayAt != "" {
+		it.DisplayAt = strPtr(displayAt)
+	}
+	return it
 }
 
 // byDisplayAtPlaylist builds a playlist with schedule.byDisplayAt enabled (§3.5.1).
@@ -176,9 +181,16 @@ func TestComputeActiveSet_EmptyPlaylist(t *testing.T) {
 func TestComputeActiveSet_InvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
+	emptyDA := ""
 	p := byDisplayAtPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Invalid", "https://a.com/inv", "not-a-date"),
+		playlist.PlaylistItem{
+			ID:        "empty",
+			Title:     "Empty",
+			Source:    "https://a.com/empty",
+			DisplayAt: &emptyDA, // present but unresolvable — not evergreen
+		},
 		makeItem("2", "Valid", "https://a.com/v", "2026-07-21T00:00:00"),
 	)
 

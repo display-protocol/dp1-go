@@ -52,15 +52,15 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 	items := make([]resolved, 0, len(p.Items))
 	for _, it := range p.Items {
 		r := resolved{item: it}
-		if it.DisplayAt == "" {
+		if it.DisplayAt == nil {
 			r.evergreen = true
 		} else {
-			r.parsed = Parse(it.DisplayAt, loc)
+			r.parsed = Parse(*it.DisplayAt, loc)
 			if r.parsed.IsValid() {
 				r.instant = r.parsed.Resolved
 				r.isTimed = true
 			}
-			// Present but unresolvable: neither timed nor evergreen (§3.5.5).
+			// Present but unresolvable (including ""): neither timed nor evergreen (§3.5.5).
 		}
 		items = append(items, r)
 	}
@@ -116,10 +116,10 @@ func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *tim
 
 	var next *time.Time
 	for _, it := range p.Items {
-		if it.DisplayAt == "" {
+		if it.DisplayAt == nil {
 			continue
 		}
-		parsed := Parse(it.DisplayAt, loc)
+		parsed := Parse(*it.DisplayAt, loc)
 		if !parsed.IsValid() {
 			continue
 		}

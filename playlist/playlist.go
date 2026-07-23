@@ -54,8 +54,11 @@ type PlaylistItem struct {
 	Provenance *ProvenanceBlock `json:"provenance,omitempty"`
 
 	// Playlists extension only (ParseAndValidatePlaylistWithPlaylistsExtension); not in core schema.
-	Note      *playlists.Note `json:"note,omitempty"`
-	DisplayAt string          `json:"displayAt,omitempty"` // ISO 8601 scheduling datetime (§3.5.2; date-only not accepted)
+	Note *playlists.Note `json:"note,omitempty"`
+	// DisplayAt is an optional ISO 8601 scheduling datetime (§3.5.2; date-only not accepted).
+	// Nil means the field is absent (evergreen when byDisplayAt is true). A non-nil pointer
+	// (including to "") means the field is present; unresolvable values are not eligible (§3.5.5).
+	DisplayAt *string `json:"displayAt,omitempty"`
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).

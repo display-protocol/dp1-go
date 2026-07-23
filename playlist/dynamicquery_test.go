@@ -292,7 +292,9 @@ func TestResolveDynamicQuery_keepsStringDisplayAt(t *testing.T) {
   "items":[
     {"source":"https://dyn.example/a","displayAt":"2099-01-01T00:00:00Z"},
     {"source":"https://dyn.example/b","displayAt":"not-a-date"},
-    {"source":"https://dyn.example/c"}
+    {"source":"https://dyn.example/c"},
+    {"source":"https://dyn.example/null","displayAt":null},
+    {"source":"https://dyn.example/empty","displayAt":""}
   ]
 }`)
 	}))
@@ -303,7 +305,7 @@ func TestResolveDynamicQuery_keepsStringDisplayAt(t *testing.T) {
 		Title:     "t",
 		Items: []PlaylistItem{{
 			Source:    "https://static.example/day",
-			DisplayAt: "2026-07-21T00:00:00Z",
+			DisplayAt: strPtr("2026-07-21T00:00:00Z"),
 		}},
 		DynamicQuery: &playlists.DynamicQuery{
 			Profile:  ProfileHTTPSJSONV1,
@@ -318,24 +320,30 @@ func TestResolveDynamicQuery_keepsStringDisplayAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
-		t.Fatalf("static displayAt cleared: %q", out.Items[0].DisplayAt)
+	if displayAtString(out.Items[0].DisplayAt) != "2026-07-21T00:00:00Z" {
+		t.Fatalf("static displayAt cleared: %q", displayAtString(out.Items[0].DisplayAt))
 	}
-	if out.Items[1].DisplayAt != "2099-01-01T00:00:00Z" {
-		t.Fatalf("dynamic string displayAt dropped: %q", out.Items[1].DisplayAt)
+	if displayAtString(out.Items[1].DisplayAt) != "2099-01-01T00:00:00Z" {
+		t.Fatalf("dynamic string displayAt dropped: %q", displayAtString(out.Items[1].DisplayAt))
 	}
-	if out.Items[2].DisplayAt != "not-a-date" {
-		t.Fatalf("invalid string displayAt dropped: %q", out.Items[2].DisplayAt)
+	if displayAtString(out.Items[2].DisplayAt) != "not-a-date" {
+		t.Fatalf("invalid string displayAt dropped: %q", displayAtString(out.Items[2].DisplayAt))
 	}
-	if out.Items[3].DisplayAt != "" {
-		t.Fatalf("absent displayAt became %q", out.Items[3].DisplayAt)
+	if out.Items[3].DisplayAt != nil {
+		t.Fatalf("absent displayAt became %q", displayAtString(out.Items[3].DisplayAt))
+	}
+	if out.Items[4].DisplayAt != nil {
+		t.Fatalf("null displayAt: want nil, got %q", displayAtString(out.Items[4].DisplayAt))
+	}
+	if out.Items[5].DisplayAt == nil || *out.Items[5].DisplayAt != "" {
+		t.Fatalf("empty displayAt: got %#v, want pointer to empty string", out.Items[5].DisplayAt)
 	}
 }
 
 func TestResolveDynamicQuery_rejectsNonStringDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	// §4.5 / §4.6.2: non-string displayAt is invalid → discard that item; keep valid ones.
+	// §4.5 / §4.6.2: non-string displayAt (not null/string) → discard that item.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{
   "items":[
@@ -371,10 +379,10 @@ func TestResolveDynamicQuery_rejectsNonStringDisplayAt(t *testing.T) {
 	if len(out.Items) != 3 {
 		t.Fatalf("got %d items, want 3 (static + 2 accepted dynamic)", len(out.Items))
 	}
-	if out.Items[1].Source != "https://dyn.example/ok" || out.Items[1].DisplayAt != "2099-01-01T00:00:00Z" {
+	if out.Items[1].Source != "https://dyn.example/ok" || displayAtString(out.Items[1].DisplayAt) != "2099-01-01T00:00:00Z" {
 		t.Fatalf("unexpected accepted dynamic[0]: %+v", out.Items[1])
 	}
-	if out.Items[2].Source != "https://dyn.example/plain" || out.Items[2].DisplayAt != "" {
+	if out.Items[2].Source != "https://dyn.example/plain" || out.Items[2].DisplayAt != nil {
 		t.Fatalf("unexpected accepted dynamic[1]: %+v", out.Items[2])
 	}
 }

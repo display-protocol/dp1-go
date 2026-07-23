@@ -98,9 +98,10 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // (itemsPath, itemMap) to obtain objects, validates each against the core playlist item schema,
 // and returns the decoded [PlaylistItem] slice.
 //
-// Optional indexer `displayAt` must be a JSON string when present (§4.5). Non-string values
-// make that item invalid and it is discarded (§4.6.2). Accepted string values are retained;
-// §3.5 applies them the same as on static items (§3.5.6).
+// Optional indexer `displayAt` must be a JSON string or null when present (§4.5). Non-string
+// values (number/bool/object/array) make that item invalid and it is discarded (§4.6.2).
+// null unmarshals to a nil [*PlaylistItem.DisplayAt] (absent / evergreen); strings are kept
+// for §3.5 scheduling (§3.5.6).
 // [Playlist.ResolveDynamicQuery] uses this when p.DynamicQuery is non-nil.
 //
 // dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
@@ -175,7 +176,7 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err != nil {
 			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
 		}
-		// §4.5: displayAt is an optional string; non-string → invalid item → discard (§4.6.2).
+		// §4.5: displayAt must be string or null; other JSON types → discard item (§4.6.2).
 		keep, err := dynamicDisplayAtTypeOK(itemJSON)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
@@ -196,7 +197,9 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 }
 
 // dynamicDisplayAtTypeOK reports whether an item may be accepted given its displayAt
-// JSON type. Absent or string → keep; non-string → discard as invalid (§4.5 / §4.6.2).
+// JSON type. Absent, JSON null, or a JSON string (including "") → keep. Other types →
+// discard (§4.5 / §4.6.2). null maps to a nil [*PlaylistItem.DisplayAt]; "" stays present
+// and is not evergreen under [displayat.ComputeActiveSet] (§3.5.5).
 func dynamicDisplayAtTypeOK(itemJSON []byte) (bool, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(itemJSON, &obj); err != nil {
@@ -206,11 +209,11 @@ func dynamicDisplayAtTypeOK(itemJSON []byte) (bool, error) {
 	if !ok {
 		return true, nil
 	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return false, nil
+	raw = bytes.TrimSpace(raw)
+	if bytes.Equal(raw, []byte("null")) || (len(raw) > 0 && raw[0] == '"') {
+		return true, nil
 	}
-	return true, nil
+	return false, nil
 }
 
 // HydrateDynamicQueryString replaces {{name}} placeholders using params. If query is empty,

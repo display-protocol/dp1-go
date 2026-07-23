@@ -59,6 +59,15 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
+func displayAtString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 	t.Parallel()
 
@@ -77,19 +86,19 @@ func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 				ID:        "2",
 				Title:     "Day 1",
 				Source:    "https://cdn.example.com/day1.html",
-				DisplayAt: "2026-07-21T00:00:00",
+				DisplayAt: strPtr("2026-07-21T00:00:00"),
 			},
 			{
 				ID:        "3",
 				Title:     "Day 2",
 				Source:    "https://cdn.example.com/day2.html",
-				DisplayAt: "2026-07-22T00:00:00",
+				DisplayAt: strPtr("2026-07-22T00:00:00"),
 			},
 			{
 				ID:        "4",
 				Title:     "Day 3",
 				Source:    "https://cdn.example.com/day3.html",
-				DisplayAt: "2026-07-23T00:00:00Z",
+				DisplayAt: strPtr("2026-07-23T00:00:00Z"),
 			},
 		},
 		Signatures: []Signature{{
@@ -119,8 +128,11 @@ func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 
 	expected := []string{"", "2026-07-21T00:00:00", "2026-07-22T00:00:00", "2026-07-23T00:00:00Z"}
 	for i, want := range expected {
-		if out.Items[i].DisplayAt != want {
-			t.Errorf("item[%d].DisplayAt = %q, want %q", i, out.Items[i].DisplayAt, want)
+		if displayAtString(out.Items[i].DisplayAt) != want {
+			t.Errorf("item[%d].DisplayAt = %q, want %q", i, displayAtString(out.Items[i].DisplayAt), want)
+		}
+		if want == "" && out.Items[i].DisplayAt != nil {
+			t.Errorf("item[%d].DisplayAt want nil (absent), got non-nil", i)
 		}
 	}
 }
@@ -144,7 +156,7 @@ func TestPlaylistItem_DisplayAt_Formats(t *testing.T) {
 			t.Parallel()
 			item := PlaylistItem{
 				Source:    "https://example.com/a",
-				DisplayAt: tc.displayAt,
+				DisplayAt: strPtr(tc.displayAt),
 			}
 			b, err := json.Marshal(&item)
 			if err != nil {
@@ -154,9 +166,29 @@ func TestPlaylistItem_DisplayAt_Formats(t *testing.T) {
 			if err := json.Unmarshal(b, &out); err != nil {
 				t.Fatal(err)
 			}
-			if out.DisplayAt != tc.displayAt {
-				t.Errorf("got %q, want %q", out.DisplayAt, tc.displayAt)
+			if displayAtString(out.DisplayAt) != tc.displayAt {
+				t.Errorf("got %q, want %q", displayAtString(out.DisplayAt), tc.displayAt)
 			}
 		})
+	}
+}
+
+func TestPlaylistItem_DisplayAt_NullAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	var nullItem PlaylistItem
+	if err := json.Unmarshal([]byte(`{"source":"https://a","displayAt":null}`), &nullItem); err != nil {
+		t.Fatal(err)
+	}
+	if nullItem.DisplayAt != nil {
+		t.Fatalf("null displayAt: got %q, want nil", *nullItem.DisplayAt)
+	}
+
+	var emptyItem PlaylistItem
+	if err := json.Unmarshal([]byte(`{"source":"https://a","displayAt":""}`), &emptyItem); err != nil {
+		t.Fatal(err)
+	}
+	if emptyItem.DisplayAt == nil || *emptyItem.DisplayAt != "" {
+		t.Fatalf("empty displayAt: got %#v, want pointer to empty string", emptyItem.DisplayAt)
 	}
 }
