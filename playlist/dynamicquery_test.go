@@ -990,6 +990,7 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	orig := &Playlist{
 		DPVersion: "1.1.0",
 		Title:     "orig",
+		Schedule:  &playlists.Schedule{ByDisplayAt: true},
 		Defaults: &Defaults{
 			Display: &DisplayPrefs{
 				Scaling: "fit",
@@ -1027,6 +1028,13 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 	if out.Defaults == orig.Defaults || out.Defaults.Display == orig.Defaults.Display {
 		t.Fatal("expected cloned defaults")
+	}
+	if out.Schedule == orig.Schedule {
+		t.Fatal("expected cloned schedule")
+	}
+	out.Schedule.ByDisplayAt = false
+	if !orig.Schedule.ByDisplayAt {
+		t.Fatal("mutating cloned schedule must not change original")
 	}
 	if out.Items[0].DisplayAt == nil || orig.Items[0].DisplayAt == nil {
 		t.Fatal("expected displayAt on static item")
