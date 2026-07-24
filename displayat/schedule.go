@@ -6,13 +6,14 @@ import (
 	"github.com/display-protocol/dp1-go/playlist"
 )
 
-// ComputeActiveSet returns the items that should be played at the given time
-// when schedule.byDisplayAt is true. See DP-1 Playlist Extension §3.5.1 / §3.5.3 / §3.5.5.
+// ComputeActiveSet returns the items that should be played at the given time when
+// displayAt scheduling is active. See DP-1 Playlist Extension §3.5.1 / §3.5.3 / §3.5.5.
 //
-// When schedule is nil or byDisplayAt is not true, returns a copy of all items and ignores
-// displayAt for filtering (§3.5.1; matches dp1-js computeActiveSet).
+// displayAt scheduling activates automatically whenever the item list contains at least
+// one item with displayAt. When no item has displayAt, every item is evergreen and this
+// returns a copy of all items in original order.
 //
-// When byDisplayAt is true:
+// When scheduling is active:
 //  1. Resolve each item’s displayAt to an instant (§3.5.2).
 //  2. Find max displayAt instant among items with resolvable displayAt ≤ now.
 //  3. Return items with displayAt == max instant, plus items with no displayAt field (evergreen).
@@ -30,12 +31,6 @@ import (
 func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) []playlist.PlaylistItem {
 	if p == nil {
 		return nil
-	}
-	// §3.5.1: filtering is opt-in; false/absent means play the full list.
-	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
-		out := make([]playlist.PlaylistItem, len(p.Items))
-		copy(out, p.Items)
-		return out
 	}
 	if loc == nil {
 		loc = time.UTC
@@ -96,18 +91,13 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 // NextDisplayAt returns the smallest displayAt instant that is strictly after now,
 // or nil if there are no future displayAt values.
 //
-// When schedule is nil or byDisplayAt is not true, returns nil (§3.5.1; scheduling is
-// opt-in — matches [ComputeActiveSet] ignoring displayAt for filtering).
-//
-// Unresolvable displayAt values are skipped (they are not timer candidates per §3.5.5).
+// When no item has a resolvable displayAt after now, returns nil. Unresolvable displayAt
+// values are skipped (they are not timer candidates per §3.5.5).
 //
 // The loc parameter is used to resolve local datetime displayAt values
 // (pass the display-locale timezone).
 func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *time.Time {
 	if p == nil {
-		return nil
-	}
-	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
 		return nil
 	}
 	if loc == nil {

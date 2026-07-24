@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/playlist"
 )
 
@@ -23,18 +22,17 @@ func makeItem(id, title, source, displayAt string) playlist.PlaylistItem {
 	return it
 }
 
-// byDisplayAtPlaylist builds a playlist with schedule.byDisplayAt enabled (§3.5.1).
-func byDisplayAtPlaylist(items ...playlist.PlaylistItem) *playlist.Playlist {
+// scheduledPlaylist builds a playlist with items for displayAt scheduling tests (§3.5.1).
+func scheduledPlaylist(items ...playlist.PlaylistItem) *playlist.Playlist {
 	return &playlist.Playlist{
-		Schedule: &playlists.Schedule{ByDisplayAt: true},
-		Items:    items,
+		Items: items,
 	}
 }
 
 func TestComputeActiveSet_BasicDaily(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://cdn.example.com/intro.html", ""),
 		makeItem("1", "Day 1", "https://cdn.example.com/day1.html", "2026-07-21T00:00:00"),
 		makeItem("2", "Day 2", "https://cdn.example.com/day2.html", "2026-07-22T00:00:00"),
@@ -103,7 +101,7 @@ func TestComputeActiveSet_BasicDaily(t *testing.T) {
 func TestComputeActiveSet_MultipleItemsSameDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Work A", "https://a.com/a", "2026-07-21T00:00:00"),
 		makeItem("2", "Work B", "https://a.com/b", "2026-07-22T00:00:00"),
@@ -148,7 +146,7 @@ func TestSchedule_ManyItemsSameDSTGap(t *testing.T) {
 		id := fmt.Sprintf("gap-%03d", i)
 		items = append(items, makeItem(id, "Gap item", "https://a.com/"+id, "2026-03-08T02:30:00"))
 	}
-	p := byDisplayAtPlaylist(items...)
+	p := scheduledPlaylist(items...)
 
 	now := time.Date(2026, 3, 8, 3, 1, 0, 0, loc)
 	active := ComputeActiveSet(p, now, loc)
@@ -174,7 +172,7 @@ func TestSchedule_ManyItemsSameDSTGap(t *testing.T) {
 func TestComputeActiveSet_AllFuture(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Future1", "https://a.com/f1", "2026-07-25T00:00:00"),
 		makeItem("2", "Future2", "https://a.com/f2", "2026-07-26T00:00:00"),
@@ -193,7 +191,7 @@ func TestComputeActiveSet_AllFuture(t *testing.T) {
 func TestComputeActiveSet_NoEvergreen(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
 		makeItem("2", "Day2", "https://a.com/d2", "2026-07-22T00:00:00"),
 	)
@@ -210,7 +208,7 @@ func TestComputeActiveSet_NoEvergreen(t *testing.T) {
 func TestComputeActiveSet_EmptyPlaylist(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist()
+	p := scheduledPlaylist()
 	active := ComputeActiveSet(p, time.Now(), time.UTC)
 	if len(active) != 0 {
 		t.Errorf("expected empty, got %v", active)
@@ -221,7 +219,7 @@ func TestComputeActiveSet_InvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
 	emptyDA := ""
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Invalid", "https://a.com/inv", "not-a-date"),
 		playlist.PlaylistItem{
@@ -259,7 +257,7 @@ func TestComputeActiveSet_CalendarInvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
 	// Date-only and calendar-invalid local values are unresolvable: excluded, not evergreen (§3.5.5).
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "DateOnly", "https://a.com/dateonly", "2026-02-28"), // date-only rejected
 		makeItem("2", "BadLocal", "https://a.com/badlocal", "2026-02-30T00:00:00"),
@@ -291,7 +289,7 @@ func TestComputeActiveSet_AbsoluteTimezone(t *testing.T) {
 	t.Parallel()
 
 	// Two items with same instant but different wire representations.
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "UTC", "https://a.com/utc", "2026-07-21T00:00:00Z"),
 		makeItem("2", "Offset", "https://a.com/off", "2026-07-21T07:00:00+07:00"), // same instant
@@ -317,7 +315,7 @@ func TestComputeActiveSet_AbsoluteTimezone(t *testing.T) {
 func TestComputeActiveSet_PreservesOrder(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("A", "A", "https://a.com/a", "2026-07-22T00:00:00"),
 		makeItem("B", "B", "https://a.com/b", ""),
 		makeItem("C", "C", "https://a.com/c", "2026-07-22T00:00:00"),
@@ -347,7 +345,7 @@ func TestComputeActiveSet_DynamicDisplayAtSchedulesLikeStatic(t *testing.T) {
 
 	// §3.5.6: displayAt rules apply the same whether items came from static items or
 	// dynamicQuery (absent → evergreen; future → not yet; invalid string → not eligible).
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("static", "Day", "https://static.example/day", "2026-07-21T00:00:00Z"),
 		makeItem("dyn-future", "DynFuture", "https://dyn.example/a", "2099-01-01T00:00:00Z"),
 		makeItem("dyn-empty", "DynEmpty", "https://dyn.example/b", ""),
@@ -374,54 +372,46 @@ func TestComputeActiveSet_DynamicDisplayAtSchedulesLikeStatic(t *testing.T) {
 	}
 }
 
-func TestComputeActiveSet_WithoutByDisplayAtReturnsAll(t *testing.T) {
+func TestComputeActiveSet_NoDisplayAtItemsReturnsAll(t *testing.T) {
 	t.Parallel()
 
-	// §3.5.1 / dp1-js: absent or false byDisplayAt → full list, ignore displayAt filtering.
+	// §3.5.1: when no item has displayAt, every item is evergreen — return full list.
 	p := &playlist.Playlist{
 		Items: []playlist.PlaylistItem{
-			makeItem("1", "Future", "https://a.com/a", "2026-07-23T00:00:00Z"),
-			makeItem("2", "Evergreen", "https://a.com/b", ""),
+			makeItem("1", "A", "https://a.com/a", ""),
+			makeItem("2", "B", "https://a.com/b", ""),
 		},
 	}
 	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
 	active := ComputeActiveSet(p, now, time.UTC)
 	if len(active) != 2 {
-		t.Fatalf("absent schedule: got %d items, want 2", len(active))
+		t.Fatalf("no displayAt items: got %d items, want 2", len(active))
 	}
-
-	p.Schedule = &playlists.Schedule{ByDisplayAt: false}
-	active = ComputeActiveSet(p, now, time.UTC)
-	if len(active) != 2 {
-		t.Fatalf("byDisplayAt=false: got %d items, want 2", len(active))
+	if active[0].ID != "1" || active[1].ID != "2" {
+		t.Fatalf("order: got %q,%q want 1,2", active[0].ID, active[1].ID)
 	}
 }
 
-func TestNextDisplayAt_WithoutByDisplayAtReturnsNil(t *testing.T) {
+func TestNextDisplayAt_NoDisplayAtItemsReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	// §3.5.1: absent or false byDisplayAt → no scheduling timers.
-	items := []playlist.PlaylistItem{
-		makeItem("1", "Future", "https://a.com/a", "2026-07-23T00:00:00Z"),
-		makeItem("2", "Evergreen", "https://a.com/b", ""),
+	// §3.5.1: when no item has displayAt, there is no scheduling timer.
+	p := &playlist.Playlist{
+		Items: []playlist.PlaylistItem{
+			makeItem("1", "A", "https://a.com/a", ""),
+			makeItem("2", "B", "https://a.com/b", ""),
+		},
 	}
 	now := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
-
-	p := &playlist.Playlist{Items: items}
 	if next := NextDisplayAt(p, now, time.UTC); next != nil {
-		t.Fatalf("absent schedule: got %v, want nil", next)
-	}
-
-	p.Schedule = &playlists.Schedule{ByDisplayAt: false}
-	if next := NextDisplayAt(p, now, time.UTC); next != nil {
-		t.Fatalf("byDisplayAt=false: got %v, want nil", next)
+		t.Fatalf("no displayAt items: got %v, want nil", next)
 	}
 }
 
 func TestNextDisplayAt_Basic(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
 		makeItem("2", "Day2", "https://a.com/d2", "2026-07-22T00:00:00"),
@@ -490,7 +480,7 @@ func TestNextDisplayAt_Basic(t *testing.T) {
 func TestNextDisplayAt_NoTimedItems(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "A", "https://a.com/a", ""),
 		makeItem("1", "B", "https://a.com/b", ""),
 	)
@@ -504,7 +494,7 @@ func TestNextDisplayAt_NoTimedItems(t *testing.T) {
 func TestNextDisplayAt_InvalidDisplayAt(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Invalid", "https://a.com/inv", "not-valid"),
 		makeItem("1", "Valid", "https://a.com/v", "2026-07-25T00:00:00"),
 	)
@@ -526,7 +516,7 @@ func TestNextDisplayAt_InvalidDisplayAt(t *testing.T) {
 func TestNextDisplayAt_ReturnsSmallest(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("1", "Later", "https://a.com/l", "2026-07-30T00:00:00"),
 		makeItem("2", "Sooner", "https://a.com/s", "2026-07-25T00:00:00"),
 		makeItem("3", "Middle", "https://a.com/m", "2026-07-27T00:00:00"),
@@ -549,7 +539,7 @@ func TestNextDisplayAt_ReturnsSmallest(t *testing.T) {
 func TestComputeActiveSet_LocalDatetimeTimezone(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
 	)
@@ -576,7 +566,7 @@ func TestComputeActiveSet_LocalDatetimeTimezone(t *testing.T) {
 func TestComputeActiveSet_NilLocation(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Day1", "https://a.com/d1", "2026-07-21T00:00:00"),
 	)
@@ -593,7 +583,7 @@ func TestComputeActiveSet_NilLocation(t *testing.T) {
 func TestNextDisplayAt_NilLocation(t *testing.T) {
 	t.Parallel()
 
-	p := byDisplayAtPlaylist(
+	p := scheduledPlaylist(
 		makeItem("0", "Intro", "https://a.com/intro", ""),
 		makeItem("1", "Day1", "https://a.com/d1", "2026-07-25T00:00:00"),
 	)

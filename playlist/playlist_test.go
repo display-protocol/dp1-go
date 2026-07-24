@@ -68,14 +68,13 @@ func displayAtString(p *string) string {
 	return *p
 }
 
-func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
+func TestPlaylist_DisplayAt(t *testing.T) {
 	t.Parallel()
 
 	p := Playlist{
 		DPVersion: "1.1.0",
 		ID:        "385f79b6-a45f-4c1c-8080-e93a192adccc",
 		Title:     "Daily",
-		Schedule:  &playlists.Schedule{ByDisplayAt: true},
 		Items: []PlaylistItem{
 			{
 				ID:     "1",
@@ -116,10 +115,6 @@ func TestPlaylist_ScheduleAndDisplayAt(t *testing.T) {
 	var out Playlist
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatal(err)
-	}
-
-	if out.Schedule == nil || !out.Schedule.ByDisplayAt {
-		t.Fatalf("expected schedule.byDisplayAt=true, got: %+v", out.Schedule)
 	}
 
 	if len(out.Items) != 4 {
