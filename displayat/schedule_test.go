@@ -1,10 +1,15 @@
 package displayat
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/playlist"
 )
 
@@ -310,6 +315,11 @@ func TestComputeActiveSet_AbsoluteTimezone(t *testing.T) {
 	if len(gotIDs) != len(wantIDs) {
 		t.Fatalf("got %v, want %v", gotIDs, wantIDs)
 	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("got %v, want %v", gotIDs, wantIDs)
+		}
+	}
 }
 
 func TestComputeActiveSet_PreservesOrder(t *testing.T) {
@@ -340,22 +350,24 @@ func TestComputeActiveSet_PreservesOrder(t *testing.T) {
 	}
 }
 
-func TestComputeActiveSet_DynamicDisplayAtSchedulesLikeStatic(t *testing.T) {
+func TestComputeActiveSet_MixedAbsentPresentInvalid(t *testing.T) {
 	t.Parallel()
 
-	// §3.5.6: displayAt rules apply the same whether items came from static items or
-	// dynamicQuery (absent → evergreen; future → not yet; invalid string → not eligible).
+	// Unit-level §3.5.5 / cohort rules on a constructed item list (not a dynamicQuery fetch):
+	// absent → evergreen; present "" / calendar-invalid that matches wire pattern → not eligible;
+	// future timed → not yet in active set but is a NextDisplayAt candidate.
 	p := scheduledPlaylist(
 		makeItem("static", "Day", "https://static.example/day", "2026-07-21T00:00:00Z"),
-		makeItem("dyn-future", "DynFuture", "https://dyn.example/a", "2099-01-01T00:00:00Z"),
-		makeItem("dyn-empty", "DynEmpty", "https://dyn.example/b", ""),
-		makeItem("dyn-invalid", "DynInvalid", "https://dyn.example/c", "not-a-date"),
+		makeItem("future", "Future", "https://example/a", "2099-01-01T00:00:00Z"),
+		playlist.PlaylistItem{ID: "empty", Title: "Empty", Source: "https://example/b", DisplayAt: strPtr("")},
+		makeItem("cal-invalid", "CalInvalid", "https://example/c", "2026-02-30T00:00:00"),
+		makeItem("absent", "Absent", "https://example/d", ""),
 	)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	active := ComputeActiveSet(p, now, time.UTC)
-	wantIDs := []string{"static", "dyn-empty"}
+	wantIDs := []string{"static", "absent"}
 	if len(active) != len(wantIDs) {
-		t.Fatalf("got %d items, want %d", len(active), len(wantIDs))
+		t.Fatalf("got %d items %v, want %d %v", len(active), itemIDs(active), len(wantIDs), wantIDs)
 	}
 	for i, id := range wantIDs {
 		if active[i].ID != id {
@@ -364,12 +376,124 @@ func TestComputeActiveSet_DynamicDisplayAtSchedulesLikeStatic(t *testing.T) {
 	}
 	next := NextDisplayAt(p, now, time.UTC)
 	if next == nil {
-		t.Fatal("NextDisplayAt: want future dynamic displayAt as candidate")
+		t.Fatal("NextDisplayAt: want future displayAt as candidate")
 	}
 	wantNext := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	if !next.Equal(wantNext) {
 		t.Fatalf("NextDisplayAt = %v, want %v", next, wantNext)
 	}
+}
+
+func TestComputeActiveSet_EmptyWhenNothingQualifies(t *testing.T) {
+	t.Parallel()
+
+	loc := time.UTC
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, loc)
+
+	t.Run("all_future_no_evergreen", func(t *testing.T) {
+		t.Parallel()
+		p := scheduledPlaylist(
+			makeItem("1", "F1", "https://a.com/f1", "2026-07-25T00:00:00Z"),
+			makeItem("2", "F2", "https://a.com/f2", "2026-07-26T00:00:00Z"),
+		)
+		active := ComputeActiveSet(p, now, loc)
+		if len(active) != 0 {
+			t.Fatalf("got %v, want empty", itemIDs(active))
+		}
+	})
+
+	t.Run("only_present_unresolvable", func(t *testing.T) {
+		t.Parallel()
+		p := scheduledPlaylist(
+			playlist.PlaylistItem{ID: "empty", Source: "https://a.com/e", DisplayAt: strPtr("")},
+			makeItem("bad", "Bad", "https://a.com/b", "2026-02-30T00:00:00"),
+		)
+		active := ComputeActiveSet(p, now, loc)
+		if len(active) != 0 {
+			t.Fatalf("got %v, want empty", itemIDs(active))
+		}
+	})
+}
+
+func TestResolveDynamicQuery_ThenSchedule_Section356(t *testing.T) {
+	t.Parallel()
+
+	// §3.5.6 end-to-end: hydrate via ResolveDynamicQuery, then schedule on the merged list.
+	// Pattern-invalid displayAt fails the overlay at fetch time; calendar-invalid that matches
+	// the wire pattern is accepted then excluded by ComputeActiveSet (§3.5.5).
+	const (
+		staticID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		pastID   = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		futureID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		absentID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+		calID    = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, fmt.Sprintf(`{
+  "items":[
+    {"id":%q,"source":"https://dyn.example/past","displayAt":"2026-07-20T00:00:00Z"},
+    {"id":%q,"source":"https://dyn.example/future","displayAt":"2099-01-01T00:00:00Z"},
+    {"id":%q,"source":"https://dyn.example/absent"},
+    {"id":%q,"source":"https://dyn.example/cal","displayAt":"2026-02-30T00:00:00"}
+  ]
+}`, pastID, futureID, absentID, calID))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []playlist.PlaylistItem{{
+			ID:        staticID,
+			Source:    "https://static.example/day",
+			DisplayAt: strPtr("2026-07-21T00:00:00Z"),
+		}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  playlist.ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	opts := &playlist.DynamicQueryFetchOptions{AllowInsecureHTTP: true}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	active := ComputeActiveSet(out, now, time.UTC)
+	// Max past displayAt is static (2026-07-21); dyn-past is earlier; dyn-absent evergreen;
+	// dyn-future not yet; dyn-cal-invalid excluded.
+	wantIDs := []string{staticID, absentID}
+	gotIDs := itemIDs(active)
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("active got %v, want %v (full items=%v)", gotIDs, wantIDs, itemIDs(out.Items))
+	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("active got %v, want %v", gotIDs, wantIDs)
+		}
+	}
+
+	next := NextDisplayAt(out, now, time.UTC)
+	if next == nil {
+		t.Fatal("NextDisplayAt: want dyn-future as candidate")
+	}
+	wantNext := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !next.Equal(wantNext) {
+		t.Fatalf("NextDisplayAt = %v, want %v", next, wantNext)
+	}
+}
+
+func itemIDs(items []playlist.PlaylistItem) []string {
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.ID
+	}
+	return ids
 }
 
 func TestComputeActiveSet_NoDisplayAtItemsReturnsAll(t *testing.T) {

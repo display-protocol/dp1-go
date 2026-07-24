@@ -136,7 +136,7 @@ prefs, err := merge.DisplayForItem(def, refManifest, item)
 
 ### Extension types (optional)
 
-Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`, plus item-level `displayAt`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
+Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Item-level `displayAt` is a `*string` on `playlist.PlaylistItem` (validated with the playlists-extension overlay). Prefer `ParseAndValidate*` at the root package for full schema validation.
 
 Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute eligible items automatically whenever any item has `displayAt`. Per §3.5.6, the same rules apply whether items came from static `items` or `dynamicQuery`.
 
