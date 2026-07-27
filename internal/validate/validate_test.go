@@ -266,6 +266,52 @@ func TestPlaylistWithPlaylistsExtension_emptyItemsWithDynamicQuery(t *testing.T)
 	}
 }
 
+func TestPlaylistWithPlaylistsExtension_scheduleAndDisplayAt(t *testing.T) {
+	t.Parallel()
+	doc := fmt.Sprintf(`{
+		"dpVersion":"1.1.0",
+		"title":"Daily",
+		"schedule":{"byDisplayAt":true},
+		"items":[
+			{"source":"https://a.com/intro"},
+			{"source":"https://a.com/day1","displayAt":"2026-07-21T00:00:00"},
+			{"source":"https://a.com/day2","displayAt":"2026-07-22T00:00:00"},
+			{"source":"https://a.com/day3","displayAt":"2026-07-23T00:00:00Z"},
+			{"source":"https://a.com/day4","displayAt":"2026-07-24T09:00:00+07:00"}
+		],
+		%s}`, playlistSigBlock)
+	if err := PlaylistWithPlaylistsExtension([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlaylistWithPlaylistsExtension_displayAtValidationFailures(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		displayAt string
+	}{
+		{"date_only", "2026-07-21"},
+		{"compact_offset_no_colon", "2026-07-21T00:00:00+0700"},
+		{"invalid_month", "2026-13-01T00:00:00"},
+		{"invalid_day", "2026-07-32T00:00:00"},
+		{"invalid_hour", "2026-07-21T25:00:00"},
+		{"wrong_separator", "2026/07/21"},
+		{"missing_seconds", "2026-07-21T00:00"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := fmt.Sprintf(`{
+				"dpVersion":"1.1.0",
+				"title":"x",
+				"items":[{"source":"https://a","displayAt":%q}],
+				%s}`, tc.displayAt, playlistSigBlock)
+			assertErrValidation(t, PlaylistWithPlaylistsExtension([]byte(doc)))
+		})
+	}
+}
+
 func TestValidators_minimalValid(t *testing.T) {
 	t.Parallel()
 	playlistCore := []byte(`{
@@ -369,6 +415,25 @@ func TestPlaylistItem_OK_and_invalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertErrValidation(t, PlaylistItem([]byte(`{}`)))
+}
+
+func TestPlaylistItemWithPlaylistsExtension_OK_and_displayAt(t *testing.T) {
+	t.Parallel()
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21T00:00:00Z"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21T00:00:00"}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":null}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":""}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"not-a-date"}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":"2026-07-21"}`)))
+	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":123}`)))
 }
 
 func assertErrValidation(t *testing.T, err error) {

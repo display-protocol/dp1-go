@@ -51,7 +51,7 @@ Playlist with the optional **playlists** extension overlay:
 p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
 ```
 
-Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item against core `PlaylistItem`, and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`, and `*playlist.DynamicQueryFetchOptions` or `nil` for HTTPS-only + SSRF-safe defaults). Set `AllowInsecureHTTP` on the options value to allow `http://` and local addresses (for example `httptest`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client, opts)` when you only need `[]PlaylistItem`. Use `errors.Is(err, playlist.ErrDynamicQueryEndpointPolicy)` when the outbound URL fails policy checks.
+Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item with core `PlaylistItem` plus the playlists-extension overlay (`note` / `displayAt`), and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`, and `*playlist.DynamicQueryFetchOptions` or `nil` for HTTPS-only + SSRF-safe defaults). Set `AllowInsecureHTTP` on the options value to allow `http://` and local addresses (for example `httptest`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client, opts)` when you only need `[]PlaylistItem`. Use `errors.Is(err, playlist.ErrDynamicQueryEndpointPolicy)` when the outbound URL fails policy checks.
 
 ### Errors
 
@@ -136,11 +136,13 @@ prefs, err := merge.DisplayForItem(def, refManifest, item)
 
 ### Extension types (optional)
 
-Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`, `extension/identity` for `Entity`, `extension/channels` for the channel document type). Prefer `ParseAndValidate*` at the root package for full schema validation.
+Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, `Schedule` / `byDisplayAt`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Item-level `displayAt` is a `*string` on `playlist.PlaylistItem` (validated with the playlists-extension overlay). Prefer `ParseAndValidate*` at the root package for full schema validation.
+
+Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute eligible items when `schedule.byDisplayAt` is true. Per §3.5.6, the same rules apply whether items came from static `items` or `dynamicQuery`.
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with optional `note` / per-item `note` overlays, and `playlist_with_extension.json` for full playlist + playlists-extension validation).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with optional `schedule` / `displayAt` / `note` overlays, and `playlist_with_extension.json` for full playlist + playlists-extension validation).
 
 ## Testing
 

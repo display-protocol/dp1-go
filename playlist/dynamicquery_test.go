@@ -283,6 +283,98 @@ func TestResolveDynamicQuery_itemMap(t *testing.T) {
 	}
 }
 
+func TestResolveDynamicQuery_keepsValidDisplayAt(t *testing.T) {
+	t.Parallel()
+
+	// Accepted items keep schema-valid displayAt; absent field stays nil.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+  "items":[
+    {"source":"https://dyn.example/a","displayAt":"2099-01-01T00:00:00Z"},
+    {"source":"https://dyn.example/c"}
+  ]
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source:    "https://static.example/day",
+			DisplayAt: strPtr("2026-07-21T00:00:00Z"),
+		}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if displayAtString(out.Items[0].DisplayAt) != "2026-07-21T00:00:00Z" {
+		t.Fatalf("static displayAt cleared: %q", displayAtString(out.Items[0].DisplayAt))
+	}
+	if displayAtString(out.Items[1].DisplayAt) != "2099-01-01T00:00:00Z" {
+		t.Fatalf("dynamic string displayAt dropped: %q", displayAtString(out.Items[1].DisplayAt))
+	}
+	if out.Items[2].DisplayAt != nil {
+		t.Fatalf("absent displayAt became %q", displayAtString(out.Items[2].DisplayAt))
+	}
+}
+
+func TestResolveDynamicQuery_invalidDisplayAtFailsValidation(t *testing.T) {
+	t.Parallel()
+
+	// Same playlists-extension DisplayAt overlay as static items — reject via validate.*.
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "number", body: `{"items":[{"source":"https://dyn.example/n","displayAt":123}]}`},
+		{name: "bool", body: `{"items":[{"source":"https://dyn.example/b","displayAt":true}]}`},
+		{name: "object", body: `{"items":[{"source":"https://dyn.example/o","displayAt":{"when":"later"}}]}`},
+		{name: "null", body: `{"items":[{"source":"https://dyn.example/null","displayAt":null}]}`},
+		{name: "empty", body: `{"items":[{"source":"https://dyn.example/empty","displayAt":""}]}`},
+		{name: "not_a_date", body: `{"items":[{"source":"https://dyn.example/bad","displayAt":"not-a-date"}]}`},
+		{name: "date_only", body: `{"items":[{"source":"https://dyn.example/d","displayAt":"2026-07-21"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			p := &Playlist{
+				DPVersion: "1.1.0",
+				Title:     "t",
+				Items:     []PlaylistItem{{Source: "https://static.example/day"}},
+				DynamicQuery: &playlists.DynamicQuery{
+					Profile:  ProfileHTTPSJSONV1,
+					Endpoint: srv.URL,
+					ResponseMapping: playlists.ResponseMapping{
+						ItemsPath:  "items",
+						ItemSchema: "dp1/1.1",
+					},
+				},
+			}
+			_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+			if !errors.Is(err, ErrDynamicQueryItemInvalid) {
+				t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
+			}
+			if !errors.Is(err, validate.ErrValidation) {
+				t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
+			}
+		})
+	}
+}
+
 func TestResolveDynamicQuery_itemMap_itemsPathDotNotation(t *testing.T) {
 	t.Parallel()
 	// Nested envelope: items live at response.payload.entries; itemMap still maps top-level keys on each row object.
@@ -898,6 +990,7 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	orig := &Playlist{
 		DPVersion: "1.1.0",
 		Title:     "orig",
+		Schedule:  &playlists.Schedule{ByDisplayAt: true},
 		Defaults: &Defaults{
 			Display: &DisplayPrefs{
 				Scaling: "fit",
@@ -908,8 +1001,9 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 		},
 		Items: []PlaylistItem{
 			{
-				Source:   "https://static",
-				Override: json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				Source:    "https://static",
+				DisplayAt: strPtr("2026-07-21T00:00:00Z"),
+				Override:  json.RawMessage(`{"display":{"scaling":"fill"}}`),
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -934,6 +1028,23 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 	if out.Defaults == orig.Defaults || out.Defaults.Display == orig.Defaults.Display {
 		t.Fatal("expected cloned defaults")
+	}
+	if out.Schedule == orig.Schedule {
+		t.Fatal("expected cloned schedule")
+	}
+	out.Schedule.ByDisplayAt = false
+	if !orig.Schedule.ByDisplayAt {
+		t.Fatal("mutating cloned schedule must not change original")
+	}
+	if out.Items[0].DisplayAt == nil || orig.Items[0].DisplayAt == nil {
+		t.Fatal("expected displayAt on static item")
+	}
+	if out.Items[0].DisplayAt == orig.Items[0].DisplayAt {
+		t.Fatal("expected cloned item displayAt pointer")
+	}
+	*out.Items[0].DisplayAt = "2099-01-01T00:00:00Z"
+	if *orig.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
+		t.Fatal("mutating cloned displayAt must not change original")
 	}
 	if len(out.Signatures) != len(orig.Signatures) || &out.Signatures[0] == &orig.Signatures[0] {
 		t.Fatal("expected cloned signatures slice")

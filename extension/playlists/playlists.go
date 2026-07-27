@@ -3,6 +3,13 @@ package playlists
 
 import "github.com/display-protocol/dp1-go/extension/identity"
 
+// Schedule holds playlist-level scheduling controls (DP-1 Playlist Extension §3.5).
+// When ByDisplayAt is true, playback includes only the current release (latest past
+// displayAt instant) plus items without displayAt.
+type Schedule struct {
+	ByDisplayAt bool `json:"byDisplayAt,omitempty"`
+}
+
 // Note is an experimental intermission card: short artist-authored text before the playlist or an item (not DP-1 core).
 type Note struct {
 	Text     string   `json:"text"`
@@ -29,6 +36,7 @@ type ResponseMapping struct {
 // Overlay is the optional top-level extension object merged into a core playlist JSON value.
 type Overlay struct {
 	Note         *Note             `json:"note,omitempty"`
+	Schedule     *Schedule         `json:"schedule,omitempty"`
 	Curators     []identity.Entity `json:"curators,omitempty"`
 	Summary      string            `json:"summary,omitempty"`
 	CoverImage   string            `json:"coverImage,omitempty"`

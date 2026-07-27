@@ -95,9 +95,10 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // PlaylistItemsFromDynamicQuery fetches and decodes dynamic playlist items from an indexer
 // according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
 // in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
-// (itemsPath, itemMap) to obtain objects, validates each against the core playlist item schema,
-// and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this
-// function when p.DynamicQuery is non-nil.
+// (itemsPath, itemMap) to obtain objects, validates each with
+// [validate.PlaylistItemWithPlaylistsExtension] (core PlaylistItem + note/displayAt overlay),
+// and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this when
+// p.DynamicQuery is non-nil.
 //
 // dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
 // checks. client may be nil to use [http.DefaultClient]. opts may be nil for default
@@ -171,7 +172,7 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err != nil {
 			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
 		}
-		if err := validate.PlaylistItem(itemJSON); err != nil {
+		if err := validate.PlaylistItemWithPlaylistsExtension(itemJSON); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
 		var it PlaylistItem
@@ -511,6 +512,10 @@ func clonePlaylist(p *Playlist) *Playlist {
 		}
 		c.Defaults = &d
 	}
+	if p.Schedule != nil {
+		s := *p.Schedule
+		c.Schedule = &s
+	}
 	if p.DynamicQuery != nil {
 		dq := *p.DynamicQuery
 		if len(p.DynamicQuery.Headers) > 0 {
@@ -524,6 +529,10 @@ func clonePlaylist(p *Playlist) *Playlist {
 	for i := range c.Items {
 		if len(c.Items[i].Override) > 0 {
 			c.Items[i].Override = append(json.RawMessage(nil), c.Items[i].Override...)
+		}
+		if c.Items[i].DisplayAt != nil {
+			s := *c.Items[i].DisplayAt
+			c.Items[i].DisplayAt = &s
 		}
 	}
 	return &c

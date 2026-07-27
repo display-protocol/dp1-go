@@ -24,6 +24,7 @@ type Playlist struct {
 	// These are not part of DP-1 core JSON Schema; they are validated only when using
 	// ParseAndValidatePlaylistWithPlaylistsExtension. Safe to omit for core-only documents.
 	Note         *playlists.Note         `json:"note,omitempty"`
+	Schedule     *playlists.Schedule     `json:"schedule,omitempty"`
 	Curators     []identity.Entity       `json:"curators,omitempty"`
 	Summary      string                  `json:"summary,omitempty"`
 	CoverImage   string                  `json:"coverImage,omitempty"`
@@ -54,6 +55,10 @@ type PlaylistItem struct {
 
 	// Playlists extension only (ParseAndValidatePlaylistWithPlaylistsExtension); not in core schema.
 	Note *playlists.Note `json:"note,omitempty"`
+	// DisplayAt is an optional ISO 8601 scheduling datetime (§3.5.2; date-only not accepted).
+	// Nil means the field is absent (evergreen when byDisplayAt is true). A non-nil pointer
+	// (including to "") means the field is present; unresolvable values are not eligible (§3.5.5).
+	DisplayAt *string `json:"displayAt,omitempty"`
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).

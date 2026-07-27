@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	playlistSchemaURL                       = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
-	playlistItemSchemaURL                   = playlistSchemaURL + "#/$defs/PlaylistItem"
-	playlistGroupSchemaURL                  = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
-	refManifestSchemaURL                    = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
-	channelsExtensionSchemaURL              = "https://dp1.feralfile.com/extensions/channels/v1.0.0/schema.json"
-	playlistsExtensionSchemaURL             = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/schema.json"
-	playlistWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.1.0/playlist_with_extension.json"
+	playlistSchemaURL                           = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
+	playlistItemSchemaURL                       = playlistSchemaURL + "#/$defs/PlaylistItem"
+	playlistGroupSchemaURL                      = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
+	refManifestSchemaURL                        = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
+	channelsExtensionSchemaURL                  = "https://dp1.feralfile.com/extensions/channels/v1.0.0/schema.json"
+	playlistsExtensionSchemaURL                 = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/schema.json"
+	playlistWithPlaylistsExtensionSchemaURL     = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_with_extension.json"
+	playlistItemWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_item_with_extension.json"
 )
 
 var (
@@ -105,8 +106,18 @@ func Playlist(data []byte) error {
 // schema's PlaylistItem definition (v1.1.0). Callers use itemSchema from
 // dynamic query responseMapping to select validator version in future minors;
 // today all supported dp1/x.y itemSchema values are validated with this definition.
+//
+// When accepting items under the playlists extension (including dynamicQuery), use
+// [PlaylistItemWithPlaylistsExtension] instead.
 func PlaylistItem(data []byte) error {
 	return validateAgainst(playlistItemSchemaURL, data)
+}
+
+// PlaylistItemWithPlaylistsExtension validates a single playlist item against core
+// PlaylistItem composed with the playlists-extension item overlay (optional note and
+// displayAt). This is the item validator used by dynamicQuery acceptance.
+func PlaylistItemWithPlaylistsExtension(data []byte) error {
+	return validateAgainst(playlistItemWithPlaylistsExtensionSchemaURL, data)
 }
 
 // PlaylistWithPlaylistsExtension validates a playlist JSON document against the composed
