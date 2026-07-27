@@ -266,12 +266,11 @@ func TestPlaylistWithPlaylistsExtension_emptyItemsWithDynamicQuery(t *testing.T)
 	}
 }
 
-func TestPlaylistWithPlaylistsExtension_scheduleAndDisplayAt(t *testing.T) {
+func TestPlaylistWithPlaylistsExtension_displayAt(t *testing.T) {
 	t.Parallel()
 	doc := fmt.Sprintf(`{
 		"dpVersion":"1.1.0",
 		"title":"Daily",
-		"schedule":{"byDisplayAt":true},
 		"items":[
 			{"source":"https://a.com/intro"},
 			{"source":"https://a.com/day1","displayAt":"2026-07-21T00:00:00"},

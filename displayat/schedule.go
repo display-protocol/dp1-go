@@ -6,13 +6,13 @@ import (
 	"github.com/display-protocol/dp1-go/playlist"
 )
 
-// ComputeActiveSet returns the items that should be played at the given time
-// when schedule.byDisplayAt is true. See DP-1 Playlist Extension §3.5.1 / §3.5.3 / §3.5.5.
+// ComputeActiveSet returns the items that should be played at the given time.
+// See DP-1 Playlist Extension §3.5.1 / §3.5.3 / §3.5.5.
 //
-// When schedule is nil or byDisplayAt is not true, returns a copy of all items and ignores
-// displayAt for filtering (§3.5.1; matches dp1-js computeActiveSet).
+// When no item has displayAt, returns a copy of all items and ignores displayAt
+// for filtering (§3.5.1).
 //
-// When byDisplayAt is true:
+// When any item has displayAt, displayAt scheduling is active:
 //  1. Resolve each item’s displayAt to an instant (§3.5.2).
 //  2. Find max displayAt instant among items with resolvable displayAt ≤ now.
 //  3. Return items with displayAt == max instant, plus items with no displayAt field (evergreen).
@@ -31,8 +31,8 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 	if p == nil {
 		return nil
 	}
-	// §3.5.1: filtering is opt-in; false/absent means play the full list.
-	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
+	// §3.5.1: filtering activates automatically when at least one item has displayAt.
+	if !hasDisplayAt(p.Items) {
 		out := make([]playlist.PlaylistItem, len(p.Items))
 		copy(out, p.Items)
 		return out
@@ -96,8 +96,7 @@ func ComputeActiveSet(p *playlist.Playlist, now time.Time, loc *time.Location) [
 // NextDisplayAt returns the smallest displayAt instant that is strictly after now,
 // or nil if there are no future displayAt values.
 //
-// When schedule is nil or byDisplayAt is not true, returns nil (§3.5.1; scheduling is
-// opt-in — matches [ComputeActiveSet] ignoring displayAt for filtering).
+// When no item has displayAt, returns nil (§3.5.1; scheduling is inactive).
 //
 // Unresolvable displayAt values are skipped (they are not timer candidates per §3.5.5).
 //
@@ -107,7 +106,7 @@ func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *tim
 	if p == nil {
 		return nil
 	}
-	if p.Schedule == nil || !p.Schedule.ByDisplayAt {
+	if !hasDisplayAt(p.Items) {
 		return nil
 	}
 	if loc == nil {
@@ -133,4 +132,13 @@ func NextDisplayAt(p *playlist.Playlist, now time.Time, loc *time.Location) *tim
 	}
 
 	return next
+}
+
+func hasDisplayAt(items []playlist.PlaylistItem) bool {
+	for _, it := range items {
+		if it.DisplayAt != nil {
+			return true
+		}
+	}
+	return false
 }
