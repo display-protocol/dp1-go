@@ -665,3 +665,18 @@ func TestDisplayForItem_emptyKeyboardEncodesAsArray(t *testing.T) {
 		})
 	}
 }
+
+// DisplayForItem must surface the inline manifest's decode error, not silently drop the layer.
+// Without this, swallowing the error passes CI, and a caller on the core-only path — where
+// README tells them to handle it — gets prefs quietly missing the inline layer instead.
+func TestDisplayForItem_badInlineManifest(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: json.RawMessage(`"https://m.example/x.json"`),
+	}
+	out, err := DisplayForItem(nil, nil, item)
+	if err == nil || out != nil {
+		t.Fatalf("expected decode error, got %+v err=%v", out, err)
+	}
+}
