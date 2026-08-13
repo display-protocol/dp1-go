@@ -500,10 +500,13 @@ func applyItemMap(raw json.RawMessage, itemMap map[string]string) (json.RawMessa
 // never mutates the receiver.
 //
 // It is deliberately not a deep copy of the whole document, and the per-item copies below are
-// narrower than they look. Override is copied because aliasing a byte slice is write-through:
-// a later append on either side can land in the other's backing array. DisplayAt is copied
-// because scheduling callers do rewrite it in place. Everything else hanging off an item —
-// Display, Note, Repro, Provenance, InlineManifest — stays shared with the receiver.
+// narrower than they look. Both exist because the item slice copy shares whatever the items
+// point at, so a write through the clone lands in the receiver: for Override that includes a
+// later append landing in the same backing array, and for DisplayAt a plain `*it.DisplayAt =`.
+// Everything else hanging off an item — Display, Note, Repro, Provenance, InlineManifest —
+// stays shared, so the same write reaches the receiver there and is simply not defended
+// against. (No in-tree caller performs any of these writes; the copies are a boundary, not a
+// record of observed mutation.)
 //
 // So the contract is on callers: treat those nested values on the returned playlist as
 // read-only, and copy before mutating (for example before filling in thumbnail dimensions on

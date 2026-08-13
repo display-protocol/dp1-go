@@ -28,8 +28,8 @@ var (
 // without ever being schema-checked — the core schema does not describe them. Only core fields
 // are guaranteed schema-valid here. Callers that act on extension fields should parse with
 // [ParseAndValidatePlaylistWithPlaylistsExtension] instead; that matters most for
-// inlineManifest, which [merge.DisplayForItem] feeds straight into display preferences, so an
-// unchecked one can carry values (scaling, background) the schema would have rejected.
+// inlineManifest, whose controls the merge package feeds straight into display preferences,
+// so an unchecked one can carry values (scaling, background) the schema would have rejected.
 func ParseAndValidatePlaylist(data []byte) (*playlist.Playlist, error) {
 	if err := PlaylistCoreSchemaValidate(data); err != nil {
 		return nil, CodeFromPlaylistValidation(err)
