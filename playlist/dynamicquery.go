@@ -505,8 +505,8 @@ func applyItemMap(raw json.RawMessage, itemMap map[string]string) (json.RawMessa
 // later append landing in the same backing array, and for DisplayAt a plain `*it.DisplayAt =`.
 // Everything else hanging off an item — Display, Note, Repro, Provenance, InlineManifest —
 // stays shared, so the same write reaches the receiver there and is simply not defended
-// against. (No in-tree caller performs any of these writes; the copies are a boundary, not a
-// record of observed mutation.)
+// against. TestResolveDynamicQuery_clonePlaylistBranches locks the two that are: it writes
+// through the clone's DisplayAt and asserts the receiver is unchanged.
 //
 // So the contract is on callers: treat those nested values on the returned playlist as
 // read-only, and copy before mutating (for example before filling in thumbnail dimensions on

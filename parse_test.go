@@ -306,7 +306,8 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_rejectsMalformedInlineMa
 	assertValidationErrorChain(t, err)
 }
 
-// Core DP-1 tolerates unknown fields, so inlineManifest must pass the core-only path untouched.
+// Core DP-1 tolerates unknown fields, so a schema-invalid inlineManifest must pass the
+// core-only path untouched: §3.6 says a player that ignores ref manifests may ignore it.
 func TestParseAndValidatePlaylist_coreIgnoresInlineManifest(t *testing.T) {
 	t.Parallel()
 	doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
@@ -314,6 +315,43 @@ func TestParseAndValidatePlaylist_coreIgnoresInlineManifest(t *testing.T) {
 		"signatures":[` + dummySignatureJSON + `]}`)
 	if _, err := dp1.ParseAndValidatePlaylist(doc); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// …but that tolerance is the schema's, not the parser's: the typed field means a JSON type
+// mismatch anywhere in the manifest subtree fails the decode step, even though the core schema
+// passed the document. Note and DisplayAt have behaved this way since before inlineManifest
+// existed; this locks the behavior so the boundary is deliberate rather than discovered.
+func TestParseAndValidatePlaylist_coreRejectsTypeMismatchedExtensionFields(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"inline_manifest_is_a_string": `"inlineManifest":"https://m.example/x.json"`,
+		"thumbnail_width_is_a_string": `"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+			"metadata":{"thumbnails":{"default":{"uri":"https://m.example/t.png","w":"1200"}}}}`,
+		"note_is_a_string":       `"note":"hello"`,
+		"display_at_is_a_number": `"displayAt":123`,
+	}
+	for name, field := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",` + field + `}],
+				"signatures":[` + dummySignatureJSON + `]}`)
+			// The core schema itself is happy — it describes none of these fields.
+			if err := dp1.PlaylistCoreSchemaValidate(doc); err != nil {
+				t.Fatalf("core schema should tolerate the unknown field: %v", err)
+			}
+			_, err := dp1.ParseAndValidatePlaylist(doc)
+			if err == nil {
+				t.Fatal("expected decode error")
+			}
+			var coded *dp1.CodedError
+			if !errors.As(err, &coded) || coded.Code != dp1.CodePlaylistInvalid {
+				t.Fatalf("want CodePlaylistInvalid, got %v", err)
+			}
+			if errors.Is(err, dp1.ErrValidation) {
+				t.Fatalf("decode failure must not masquerade as schema validation: %v", err)
+			}
+		})
 	}
 }
 

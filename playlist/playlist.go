@@ -62,9 +62,13 @@ type PlaylistItem struct {
 	// InlineManifest carries a complete Ref Manifest inline instead of behind Ref (§3.6).
 	// It is the same document with the same schema — the extension overlay $refs the unmodified
 	// ref-manifest schema — so a malformed inline manifest invalidates the document on the
-	// playlists-extension validation path. On the core-only path the field is an unknown one
-	// that core DP-1 tolerates: it still decodes here, but nothing has checked it. Parse with
-	// ParseAndValidatePlaylistWithPlaylistsExtension before acting on this field.
+	// playlists-extension validation path. On the core-only path the core schema tolerates it
+	// as an unknown field and nothing checks it — but tolerance stops at the schema: because
+	// this type exists, a value whose JSON types do not fit it (a string where the manifest
+	// goes, "1200" for a thumbnail width) fails the decode step of ParseAndValidatePlaylist,
+	// which core DP-1 §3.6 would have let a core-only player ignore. Pre-existing shape —
+	// Note and DisplayAt behave the same way — but this field widens it to a whole subtree.
+	// Parse with ParseAndValidatePlaylistWithPlaylistsExtension before acting on this field.
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
 	// No refHash counterpart exists: these bytes are inside the playlist and are already covered
