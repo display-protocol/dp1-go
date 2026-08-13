@@ -263,11 +263,29 @@ func Test_applyDisplayJSON_invalidInteractionIgnored(t *testing.T) {
 	if dst.Scaling != "stretch" {
 		t.Fatal(dst.Scaling)
 	}
-	if dst.Interaction == nil {
-		t.Fatal("expected interaction shell when controls include interaction JSON")
+	// An undecodable interaction block now leaves no trace: presence-based merging allocates
+	// the shell only for keys it is about to write, so an unusable block cannot turn an
+	// otherwise-empty DisplayPrefs into a non-empty one. Before, it left an empty shell behind.
+	if dst.Interaction != nil {
+		t.Fatalf("invalid interaction JSON must apply nothing, got %+v", dst.Interaction)
 	}
-	if len(dst.Interaction.Keyboard) != 0 || dst.Interaction.Mouse != nil {
-		t.Fatal("expected no interaction fields applied when JSON is invalid")
+}
+
+func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
+	t.Parallel()
+	dst := playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"KeyA"},
+		Mouse:    &playlist.MousePrefs{Click: true},
+	}}
+	// An interaction object that mentions neither key must not disturb what is already there.
+	applyInteractionJSON(&dst, json.RawMessage(`{}`))
+	if len(dst.Interaction.Keyboard) != 1 || !dst.Interaction.Mouse.Click {
+		t.Fatalf("empty interaction object overwrote lower layer: %+v", dst.Interaction)
+	}
+	// An empty mouse object is presence without keys: same rule one level down.
+	applyInteractionJSON(&dst, json.RawMessage(`{"mouse":{}}`))
+	if !dst.Interaction.Mouse.Click {
+		t.Fatalf("empty mouse object cleared click: %+v", dst.Interaction.Mouse)
 	}
 }
 
@@ -296,6 +314,16 @@ func TestDisplayForItem_badOverride(t *testing.T) {
 
 // --- inline manifest (playlists extension §3.6) ---
 
+// rawManifest renders a manifest to the wire form PlaylistItem.InlineManifest holds.
+func rawManifest(t *testing.T, m *refmanifest.Manifest) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func manifestWithScaling(id, scaling string) *refmanifest.Manifest {
 	return &refmanifest.Manifest{
 		RefVersion: "0.1.0",
@@ -312,7 +340,7 @@ func TestDisplayForItem_inlineManifestOverlay(t *testing.T) {
 	t.Parallel()
 	item := playlist.PlaylistItem{
 		Source:         "https://x",
-		InlineManifest: manifestWithScaling("inline", "stretch"),
+		InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch")),
 	}
 	out, err := DisplayForItem(nil, nil, item)
 	if err != nil {
@@ -330,7 +358,7 @@ func TestDisplayForItem_refWinsOverInlineManifest(t *testing.T) {
 	loop := true
 	inline := manifestWithScaling("inline", "stretch")
 	inline.Controls.Display.Loop = &loop
-	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: inline}
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, inline)}
 
 	out, err := DisplayForItem(nil, manifestWithScaling("remote", "fill"), item)
 	if err != nil {
@@ -349,7 +377,7 @@ func TestDisplayForItem_itemLocalWinsOverInlineManifest(t *testing.T) {
 	t.Parallel()
 	item := playlist.PlaylistItem{
 		Source:         "https://x",
-		InlineManifest: manifestWithScaling("inline", "stretch"),
+		InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch")),
 		Display:        &playlist.DisplayPrefs{Scaling: "fit"},
 	}
 	out, err := DisplayForItem(nil, nil, item)
@@ -363,17 +391,68 @@ func TestDisplayForItem_itemLocalWinsOverInlineManifest(t *testing.T) {
 
 func TestManifestForItem(t *testing.T) {
 	t.Parallel()
-	inline := manifestWithScaling("inline", "stretch")
 	remote := manifestWithScaling("remote", "fill")
-	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: inline}
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch"))}
 
-	if got := ManifestForItem(remote, item); got != remote {
-		t.Fatalf("ref must win, got %+v", got)
+	got, err := ManifestForItem(remote, item)
+	if err != nil || got != remote {
+		t.Fatalf("ref must win, got %+v err=%v", got, err)
 	}
-	if got := ManifestForItem(nil, item); got != inline {
-		t.Fatalf("expected inline fallback, got %+v", got)
+	got, err = ManifestForItem(nil, item)
+	if err != nil || got == nil || got.ID != "inline" {
+		t.Fatalf("expected inline fallback, got %+v err=%v", got, err)
 	}
-	if got := ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x"}); got != nil {
-		t.Fatalf("expected nil, got %+v", got)
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil || got != nil {
+		t.Fatalf("expected nil, got %+v err=%v", got, err)
+	}
+	// A core-parsed playlist can carry anything under inlineManifest; the decode error is the
+	// only place that surfaces, and it must not be mistaken for "no manifest".
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x", InlineManifest: json.RawMessage(`"not-a-manifest"`)})
+	if err == nil || got != nil {
+		t.Fatalf("expected decode error, got %+v err=%v", got, err)
+	}
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x", InlineManifest: json.RawMessage(`null`)})
+	if err != nil || got != nil {
+		t.Fatalf("JSON null must read as absent, got %+v err=%v", got, err)
+	}
+}
+
+// F2 regression: two manifests stack, so the higher-precedence one must override only the keys
+// it actually carries. A ref manifest setting mouse.scroll must not erase the inline copy's
+// mouse.click, and a present-but-empty keyboard must win over a non-empty lower one.
+func TestDisplayForItem_nestedInteractionAcrossInlineAndRef(t *testing.T) {
+	t.Parallel()
+	withInteraction := func(id, interaction string) *refmanifest.Manifest {
+		m := manifestWithScaling(id, "")
+		m.Controls.Display.Interaction = json.RawMessage(interaction)
+		return m
+	}
+	inline := withInteraction("inline", `{"keyboard":["KeyA"],"mouse":{"click":true,"hover":true}}`)
+	ref := withInteraction("remote", `{"keyboard":[],"mouse":{"scroll":true,"hover":false}}`)
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, inline)}
+
+	out, err := DisplayForItem(nil, ref, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Interaction == nil || out.Interaction.Mouse == nil {
+		t.Fatalf("got %+v", out)
+	}
+	m := out.Interaction.Mouse
+	if !m.Click {
+		t.Error("mouse.click from the inline manifest was cleared by a ref that never mentions it")
+	}
+	if !m.Scroll {
+		t.Error("mouse.scroll from the ref manifest was not applied")
+	}
+	if m.Hover {
+		t.Error("mouse.hover:false in the ref manifest must override the inline true")
+	}
+	if m.Drag {
+		t.Error("mouse.drag was set by neither manifest")
+	}
+	if len(out.Interaction.Keyboard) != 0 {
+		t.Errorf("an explicit empty keyboard must win, got %v", out.Interaction.Keyboard)
 	}
 }

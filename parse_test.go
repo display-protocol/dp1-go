@@ -266,7 +266,7 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_inlineManifest(t *testin
 		Title:     "Inline",
 		Items: []playlist.PlaylistItem{{
 			Source: "https://example.com/work.html",
-			InlineManifest: &refmanifest.Manifest{
+			InlineManifest: mustMarshal(t, &refmanifest.Manifest{
 				RefVersion: "0.1.0",
 				ID:         "ref-9d26ecb3",
 				Created:    "2026-07-28T00:00:00Z",
@@ -278,7 +278,7 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_inlineManifest(t *testin
 						"default": {URI: "https://example.com/thumb.png"},
 					},
 				},
-			},
+			}),
 		}},
 		Signatures: []playlist.Signature{dummySignature(t)},
 	}
@@ -287,10 +287,23 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_inlineManifest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	im := out.Items[0].InlineManifest
+	// Schema-valid on this path, so the decode cannot fail.
+	im, err := out.Items[0].ParseInlineManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if im == nil || im.ID != "ref-9d26ecb3" || im.Metadata.Title != "Pre-Process" {
 		t.Fatalf("inlineManifest: %+v", im)
 	}
+}
+
+func mustMarshal(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestParseAndValidatePlaylistWithPlaylistsExtension_rejectsMalformedInlineManifest(t *testing.T) {
@@ -318,36 +331,39 @@ func TestParseAndValidatePlaylist_coreIgnoresInlineManifest(t *testing.T) {
 	}
 }
 
-// …but that tolerance is the schema's, not the parser's: the typed field means a JSON type
-// mismatch anywhere in the manifest subtree fails the decode step even though the core schema
-// passed the document. Locked here so the boundary is deliberate rather than discovered, and
-// so the test above is not read as proof of a tolerance that stops at the schema.
-func TestParseAndValidatePlaylist_coreRejectsTypeMismatchedInlineManifest(t *testing.T) {
+// …and the tolerance has to survive the decode step too, which is why the field is raw JSON.
+// A core-only player must be able to parse a playlist carrying an inlineManifest of any shape,
+// including one no manifest schema would accept: with a typed field these documents failed
+// json.Unmarshal after the core schema had already passed them.
+func TestParseAndValidatePlaylist_coreToleratesTypeMismatchedInlineManifest(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"inline_manifest_is_a_string": `"inlineManifest":"https://m.example/x.json"`,
-		"thumbnail_width_is_a_string": `"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+		"inline_manifest_is_a_string": `"https://m.example/x.json"`,
+		"inline_manifest_is_an_array": `[]`,
+		"thumbnail_width_is_a_string": `{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
 			"metadata":{"thumbnails":{"default":{"uri":"https://m.example/t.png","w":"1200"}}}}`,
 	}
-	for name, field := range cases {
+	for name, manifest := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",` + field + `}],
+			doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
+				"inlineManifest":` + manifest + `}],
 				"signatures":[` + dummySignatureJSON + `]}`)
-			// The core schema itself is happy — it describes none of these fields.
+			// The core schema is happy — it describes no extension field.
 			if err := dp1.PlaylistCoreSchemaValidate(doc); err != nil {
 				t.Fatalf("core schema should tolerate the unknown field: %v", err)
 			}
-			_, err := dp1.ParseAndValidatePlaylist(doc)
-			if err == nil {
-				t.Fatal("expected decode error")
+			p, err := dp1.ParseAndValidatePlaylist(doc)
+			if err != nil {
+				t.Fatalf("core parse must tolerate it too: %v", err)
 			}
-			var coded *dp1.CodedError
-			if !errors.As(err, &coded) || coded.Code != dp1.CodePlaylistInvalid {
-				t.Fatalf("want CodePlaylistInvalid, got %v", err)
+			// The bytes are kept verbatim, and the error surfaces only when someone asks for a
+			// manifest — the point at which a caller has opted into the extension.
+			if _, err := p.Items[0].ParseInlineManifest(); err == nil {
+				t.Fatal("expected the decode error at ParseInlineManifest")
 			}
-			if errors.Is(err, dp1.ErrValidation) {
-				t.Fatalf("decode failure must not masquerade as schema validation: %v", err)
+			if _, err := dp1.ParseAndValidateRefManifest(p.Items[0].InlineManifest); err == nil {
+				t.Fatal("expected raw bytes to be rejected by the ref-manifest validator")
 			}
 		})
 	}
@@ -557,12 +573,14 @@ func TestCodedError_and_WithCode(t *testing.T) {
 	})
 }
 
-// §3.6 puts the inline manifest's bytes inside the signed payload, so signing and verifying
-// must run on the raw document. The typed structs are not byte-faithful: omitempty drops
-// present-but-empty fields, and the §3.6 example manifest has one (an artist with "id": "").
-// This locks both halves — raw bytes verify, a re-marshaled struct does not — so the hazard
-// is a tested property rather than something a caller discovers as a bogus sigInvalid.
-func TestInlineManifest_signOverRawBytesNotStructRoundTrip(t *testing.T) {
+// §3.6 puts the inline manifest's bytes inside the signed payload with no refHash of their own,
+// so a decode/re-encode must not disturb them. Holding the field as raw JSON is what makes that
+// true: the §3.6 example carries an artist with "id": "", which omitempty on a decoded manifest
+// would drop, changing the JCS payload and invalidating a signature on an untouched document.
+//
+// The guarantee is scoped to the manifest subtree — omitempty elsewhere in these structs can
+// still drop present-but-empty fields, so raw bytes remain the safe thing to sign in general.
+func TestInlineManifest_survivesStructRoundTripForSigning(t *testing.T) {
 	t.Parallel()
 	_, priv, _ := ed25519.GenerateKey(nil)
 	body := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://example.com/a",` +
@@ -583,8 +601,7 @@ func TestInlineManifest_signOverRawBytesNotStructRoundTrip(t *testing.T) {
 		t.Fatalf("raw bytes must verify: ok=%v failed=%+v err=%v", ok, failed, err)
 	}
 
-	// Same document, re-encoded from the decoded structs: the empty artist id is gone, so the
-	// JCS payload differs and the signature no longer matches.
+	// Same document, re-encoded from the decoded structs.
 	decoded, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed)
 	if err != nil {
 		t.Fatal(err)
@@ -593,11 +610,11 @@ func TestInlineManifest_signOverRawBytesNotStructRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(remarshaled), `"id":""`) {
-		t.Fatal("expected omitempty to drop the empty artist id; update this test if Artist.ID changed")
+	if !strings.Contains(string(remarshaled), `"id":""`) {
+		t.Fatalf("the empty artist id was dropped, so inlineManifest is no longer raw JSON: %s", remarshaled)
 	}
-	ok, _, err = sign.VerifyPlaylistSignatures(remarshaled)
-	if err == nil && ok {
-		t.Fatal("re-marshaled document verified: struct round trip is now byte-faithful, so the warning on PlaylistItem.InlineManifest is stale")
+	ok, failed, err = sign.VerifyPlaylistSignatures(remarshaled)
+	if err != nil || !ok {
+		t.Fatalf("round-tripped document must still verify: ok=%v failed=%+v err=%v", ok, failed, err)
 	}
 }

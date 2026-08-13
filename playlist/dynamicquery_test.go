@@ -1130,7 +1130,10 @@ func TestResolveDynamicQuery_inlineManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	im := out.Items[1].InlineManifest
+	im, err := out.Items[1].ParseInlineManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if im == nil || im.ID != "ref-dyn" || im.Metadata.Title != "Dyn" {
 		t.Fatalf("dynamic inlineManifest dropped: %+v", im)
 	}

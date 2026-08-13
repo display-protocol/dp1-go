@@ -31,7 +31,11 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 	if def != nil && def.Display != nil {
 		base = *cloneDisplay(def.Display)
 	}
-	applyManifestDisplay(&base, item.InlineManifest)
+	inline, err := item.ParseInlineManifest()
+	if err != nil {
+		return nil, err
+	}
+	applyManifestDisplay(&base, inline)
 	applyManifestDisplay(&base, ref)
 	if len(item.Override) > 0 {
 		var ov struct {
@@ -61,12 +65,13 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 //
 // This resolves the whole document, not per-field: the two manifests are alternative carriages
 // of one document (§3.6), so they are not merged key by key. Display controls are the exception
-// and are layered by [DisplayForItem].
-func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) *refmanifest.Manifest {
+// and are layered by [DisplayForItem]. The error is the inline manifest's decode error; it
+// cannot occur for a playlist parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
+func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) (*refmanifest.Manifest, error) {
 	if ref != nil {
-		return ref
+		return ref, nil
 	}
-	return item.InlineManifest
+	return item.ParseInlineManifest()
 }
 
 // applyManifestDisplay overlays one manifest's display controls, tolerating a nil manifest or
@@ -171,18 +176,61 @@ func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayContro
 		v := *src.Loop
 		dst.Loop = &v
 	}
-	if len(src.Interaction) > 0 {
-		if dst.Interaction == nil {
-			dst.Interaction = &playlist.InteractionPrefs{}
+	applyInteractionJSON(dst, src.Interaction)
+}
+
+// applyInteractionJSON overlays one manifest's interaction block by JSON field presence, not by
+// Go zero values. Two manifests now stack (inline then ref, §3.6), so assigning a decoded block
+// wholesale would let a ref manifest setting only mouse.scroll erase a mouse.click the inline
+// copy set — clobbering a key the higher-precedence document never mentioned, which
+// ref-manifest §7 ("last-write-wins within the same key path") does not license.
+//
+// Presence is what the pointers below record: nil means the key was absent and the lower layer
+// stands; non-nil means it was written and wins, including "keyboard": [] and "click": false,
+// which a length or truthiness check would silently drop.
+func applyInteractionJSON(dst *playlist.DisplayPrefs, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var src struct {
+		Keyboard *[]string `json:"keyboard"`
+		Mouse    *struct {
+			Click  *bool `json:"click"`
+			Scroll *bool `json:"scroll"`
+			Drag   *bool `json:"drag"`
+			Hover  *bool `json:"hover"`
+		} `json:"mouse"`
+	}
+	// A manifest that reached here was schema-checked by the caller's parser; a decode failure
+	// means the interaction block is unusable, and dropping it leaves lower layers intact.
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return
+	}
+	if src.Keyboard == nil && src.Mouse == nil {
+		return
+	}
+	if dst.Interaction == nil {
+		dst.Interaction = &playlist.InteractionPrefs{}
+	}
+	if src.Keyboard != nil {
+		dst.Interaction.Keyboard = append([]string(nil), *src.Keyboard...)
+	}
+	if src.Mouse != nil {
+		if dst.Interaction.Mouse == nil {
+			dst.Interaction.Mouse = &playlist.MousePrefs{}
 		}
-		var ip playlist.InteractionPrefs
-		if err := json.Unmarshal(src.Interaction, &ip); err == nil {
-			if len(ip.Keyboard) > 0 {
-				dst.Interaction.Keyboard = ip.Keyboard
-			}
-			if ip.Mouse != nil {
-				dst.Interaction.Mouse = ip.Mouse
-			}
+		m := dst.Interaction.Mouse
+		if src.Mouse.Click != nil {
+			m.Click = *src.Mouse.Click
+		}
+		if src.Mouse.Scroll != nil {
+			m.Scroll = *src.Mouse.Scroll
+		}
+		if src.Mouse.Drag != nil {
+			m.Drag = *src.Mouse.Drag
+		}
+		if src.Mouse.Hover != nil {
+			m.Hover = *src.Mouse.Hover
 		}
 	}
 }

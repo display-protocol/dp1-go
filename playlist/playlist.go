@@ -3,6 +3,7 @@ package playlist
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
@@ -61,20 +62,41 @@ type PlaylistItem struct {
 	DisplayAt *string `json:"displayAt,omitempty"`
 	// InlineManifest carries a complete Ref Manifest inline instead of behind Ref (§3.6):
 	// the same document, checked by the unmodified ref-manifest schema, so a malformed one
-	// invalidates the playlist on the playlists-extension path. The core schema does not
-	// describe the field, so parse with ParseAndValidatePlaylistWithPlaylistsExtension before
-	// acting on it — though the typed field still constrains the core path, where a JSON type
-	// mismatch inside the manifest fails the decode step on a schema-accepted document.
+	// invalidates the playlist on the playlists-extension path.
+	//
+	// Held as raw JSON, like Override, rather than as a decoded manifest. The core schema does
+	// not describe this field and core DP-1 tolerates unknown ones, so a core-only player must
+	// be able to parse a playlist carrying an inlineManifest it does not implement — including
+	// one whose shape it would reject. A typed field would fail the decode step of
+	// ParseAndValidatePlaylist on documents the core schema accepted. Keeping the bytes also
+	// keeps them verbatim: they are covered by the playlist signature (core §7.1) with no
+	// refHash counterpart, and re-encoding a decoded manifest would drop present-but-empty
+	// fields (the artist "id": "" in the §3.6 example) and change the JCS payload.
+	//
+	// Use ParseInlineManifest to decode, or hand these bytes straight to
+	// dp1.ParseAndValidateRefManifest for decode plus full schema validation.
 	//
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
-	//
-	// No refHash counterpart exists: these bytes are inside the playlist and are already
-	// covered by the playlist signature (core §7.1) — literally those bytes, so sign and verify
-	// the raw document. This type is not byte-faithful: omitempty drops present-but-empty
-	// fields such as the artist "id": "" in the §3.6 example, so a decode/re-encode round trip
-	// changes the JCS payload and breaks verification.
-	InlineManifest *refmanifest.Manifest `json:"inlineManifest,omitempty"`
+	InlineManifest json.RawMessage `json:"inlineManifest,omitempty"`
+}
+
+// ParseInlineManifest decodes the item's inline Ref Manifest (§3.6).
+//
+// Returns (nil, nil) when the field is absent or JSON null, so callers can branch on the
+// manifest alone. Decode only — the bytes are schema-checked when the playlist was parsed with
+// dp1.ParseAndValidatePlaylistWithPlaylistsExtension; on the core-only path they are whatever
+// the document carried, and an error here is how that surfaces. For decode plus validation,
+// pass item.InlineManifest to dp1.ParseAndValidateRefManifest instead.
+func (it PlaylistItem) ParseInlineManifest() (*refmanifest.Manifest, error) {
+	if len(it.InlineManifest) == 0 || string(it.InlineManifest) == "null" {
+		return nil, nil
+	}
+	var m refmanifest.Manifest
+	if err := json.Unmarshal(it.InlineManifest, &m); err != nil {
+		return nil, fmt.Errorf("playlist: decode inlineManifest: %w", err)
+	}
+	return &m, nil
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).
