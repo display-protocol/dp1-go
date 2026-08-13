@@ -63,6 +63,8 @@ var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 // ResolveDynamicQuery resolves the playlists extension dynamicQuery on p, when present.
 // It calls [PlaylistItemsFromDynamicQuery] with p.DynamicQuery and appends the returned items
 // after any existing static items. The receiver is not modified; a new [Playlist] value is returned.
+// The copy is shallow below item level: nested pointer fields on items (Display, Note, Repro,
+// Provenance, InlineManifest) are shared with the receiver, so treat them as read-only.
 //
 // If p.DynamicQuery is nil, returns a clone of p with no network I/O. If p is nil, returns an
 // error wrapping [ErrDynamicQueryRequest].
@@ -493,6 +495,16 @@ func applyItemMap(raw json.RawMessage, itemMap map[string]string) (json.RawMessa
 	return json.Marshal(out)
 }
 
+// clonePlaylist copies the containers ResolveDynamicQuery writes through — the items and
+// signature/curator slices, defaults, and the dynamicQuery block it hydrates — so resolving
+// never mutates the receiver.
+//
+// It is deliberately not a deep copy of the whole document. Nested pointers hanging off an
+// item (Display, Note, Repro, Provenance, InlineManifest) stay shared with the receiver:
+// resolution only appends items, so copying those trees would be cost with no isolation to
+// show for it. The contract that follows is on callers — treat those nested values on the
+// returned playlist as read-only, and copy before mutating (for example before filling in
+// thumbnail dimensions on an InlineManifest after probing the image).
 func clonePlaylist(p *Playlist) *Playlist {
 	c := *p
 	if len(p.Items) > 0 {

@@ -22,6 +22,14 @@ var (
 )
 
 // ParseAndValidatePlaylist validates against the core playlist schema and decodes into playlist.Playlist.
+//
+// Core DP-1 tolerates unknown fields, so registry-extension fields present in the document
+// (note, displayAt, inlineManifest, curators, dynamicQuery, …) decode into the returned value
+// without ever being schema-checked — the core schema does not describe them. Only core fields
+// are guaranteed schema-valid here. Callers that act on extension fields should parse with
+// [ParseAndValidatePlaylistWithPlaylistsExtension] instead; that matters most for
+// inlineManifest, which [merge.DisplayForItem] feeds straight into display preferences, so an
+// unchecked one can carry values (scaling, background) the schema would have rejected.
 func ParseAndValidatePlaylist(data []byte) (*playlist.Playlist, error) {
 	if err := PlaylistCoreSchemaValidate(data); err != nil {
 		return nil, CodeFromPlaylistValidation(err)
