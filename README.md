@@ -134,7 +134,7 @@ import "github.com/display-protocol/dp1-go/merge"
 prefs, err := merge.DisplayForItem(def, refManifest, item)
 ```
 
-`item.InlineManifest` is applied automatically, so pass `nil` for `refManifest` when no manifest was fetched. `merge.ManifestForItem(refManifest, item)` returns the manifest a player should read for non-display fields (metadata, i18n): a fetched `ref` wins, the inline copy is the offline/degraded fallback. Both return an error if the item's inline manifest cannot be decoded, which is only reachable for playlists parsed on the core-only path.
+`item.InlineManifest` is applied automatically, so pass `nil` for `refManifest` when no manifest was fetched. `merge.ManifestForItem(refManifest, item)` returns the manifest a player should read for non-display fields (metadata, i18n): a fetched `ref` wins, the inline copy is the offline/degraded fallback. Both return an error if the item's inline manifest cannot be decoded. That is the normal case for playlists parsed on the core-only path, and still possible after extension validation — JSON Schema `integer` accepts `1e2` and `100.0`, which do not decode into `int` — so handle the error rather than treating it as unreachable.
 
 Every layer resolves per key by field presence, so a higher-precedence layer can switch an interaction off as well as on: `playlist.MousePrefs` fields are `*bool` (nil = the layer said nothing, `false` = explicit revocation), and an explicit `"keyboard": []` revokes keys a lower layer allowed.
 

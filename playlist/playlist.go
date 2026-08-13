@@ -112,10 +112,13 @@ type DisplayPrefs struct {
 
 // InteractionPrefs configures input (keyboard / mouse).
 //
-// Keyboard distinguishes absent (nil) from an explicit empty list, which the merge order needs:
-// "keyboard": [] is how a higher-precedence layer revokes keys a lower one allowed.
+// Keyboard is a pointer for the same reason MousePrefs uses pointers: the merge order needs
+// absent (nil) to differ from an explicit empty list, since "keyboard": [] is how a
+// higher-precedence layer revokes keys a lower one allowed. A plain slice would survive
+// decoding but not encoding — omitempty erases an empty list, so parsing a playlist and
+// writing it back would silently turn a revocation into "said nothing".
 type InteractionPrefs struct {
-	Keyboard []string    `json:"keyboard,omitempty"`
+	Keyboard *[]string   `json:"keyboard,omitempty"`
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 

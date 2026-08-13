@@ -523,8 +523,13 @@ func clonePlaylist(p *Playlist) *Playlist {
 		c.DynamicQuery = &dq
 	}
 	for i := range c.Items {
+		// The raw-JSON fields are copied because a decoded RawMessage usually has spare
+		// capacity, so an append through the clone would write into the receiver's array.
 		if len(c.Items[i].Override) > 0 {
 			c.Items[i].Override = append(json.RawMessage(nil), c.Items[i].Override...)
+		}
+		if len(c.Items[i].InlineManifest) > 0 {
+			c.Items[i].InlineManifest = append(json.RawMessage(nil), c.Items[i].InlineManifest...)
 		}
 		if c.Items[i].DisplayAt != nil {
 			s := *c.Items[i].DisplayAt

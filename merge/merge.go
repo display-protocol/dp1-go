@@ -65,8 +65,12 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 //
 // This resolves the whole document, not per-field: the two manifests are alternative carriages
 // of one document (§3.6), so they are not merged key by key. Display controls are the exception
-// and are layered by [DisplayForItem]. The error is the inline manifest's decode error; it
-// cannot occur for a playlist parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
+// and are layered by [DisplayForItem].
+//
+// The error is the inline manifest's decode error. Schema validation makes it unlikely but not
+// impossible: JSON Schema "integer" accepts any number with a zero fraction, so a thumbnail
+// "w": 1e2 or 100.0 — what a float-typed producer emits — validates and then fails to decode
+// into int. Handle the error rather than assuming a validated playlist cannot produce one.
 func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) (*refmanifest.Manifest, error) {
 	if ref != nil {
 		return ref, nil
@@ -83,16 +87,24 @@ func applyManifestDisplay(dst *playlist.DisplayPrefs, m *refmanifest.Manifest) {
 	applyDisplayJSON(dst, m.Controls.Display)
 }
 
+// cloneDisplay copies the defaults into the merge base. It must be deep: the result is handed
+// to the caller, and every pointer or slice left shared with the playlist defaults is one a
+// player can write through to corrupt the baseline for every later item. Overlays themselves
+// always allocate, so this is the only place that sharing could originate.
 func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	c := *d
+	overlayBool(&c.Autoplay, d.Autoplay)
+	overlayBool(&c.Loop, d.Loop)
+	if d.Margin != nil {
+		c.Margin = append(json.RawMessage(nil), d.Margin...)
+	}
 	if d.Interaction != nil {
 		ip := *d.Interaction
 		if d.Interaction.Keyboard != nil {
-			ip.Keyboard = append([]string(nil), d.Interaction.Keyboard...)
+			kb := append([]string(nil), *d.Interaction.Keyboard...)
+			ip.Keyboard = &kb
 		}
 		if d.Interaction.Mouse != nil {
-			// Copying the struct would alias the caller's *bool fields, so a later overlay
-			// writing through them would reach back into the playlist defaults.
 			mp := playlist.MousePrefs{}
 			overlayBool(&mp.Click, d.Interaction.Mouse.Click)
 			overlayBool(&mp.Scroll, d.Interaction.Mouse.Scroll)
@@ -148,7 +160,8 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 		// Presence, not emptiness: an explicit "keyboard": [] revokes the keys a lower layer
 		// allowed, so only a nil slice means "said nothing".
 		if src.Interaction.Keyboard != nil {
-			dst.Interaction.Keyboard = append([]string(nil), src.Interaction.Keyboard...)
+			kb := append([]string(nil), *src.Interaction.Keyboard...)
+			dst.Interaction.Keyboard = &kb
 		}
 		if src.Interaction.Mouse != nil {
 			if dst.Interaction.Mouse == nil {
@@ -227,7 +240,8 @@ func applyInteractionJSON(dst *playlist.DisplayPrefs, raw json.RawMessage) {
 		dst.Interaction = &playlist.InteractionPrefs{}
 	}
 	if src.Keyboard != nil {
-		dst.Interaction.Keyboard = append([]string(nil), *src.Keyboard...)
+		kb := append([]string(nil), *src.Keyboard...)
+		dst.Interaction.Keyboard = &kb
 	}
 	if src.Mouse != nil {
 		if dst.Interaction.Mouse == nil {

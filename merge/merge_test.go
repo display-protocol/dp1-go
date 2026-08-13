@@ -195,7 +195,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Scaling:  "fit",
 			Autoplay: &fal,
 			Interaction: &playlist.InteractionPrefs{
-				Keyboard: []string{"KeyA"},
+				Keyboard: keys("KeyA"),
 				Mouse:    &playlist.MousePrefs{Click: &tru},
 			},
 			UserOverrides: map[string]bool{"scaling": true},
@@ -225,7 +225,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 		Display: &playlist.DisplayPrefs{
 			Scaling: "auto",
 			Interaction: &playlist.InteractionPrefs{
-				Keyboard: []string{"Enter"},
+				Keyboard: keys("Enter"),
 				Mouse:    &playlist.MousePrefs{Hover: &tru},
 			},
 			UserOverrides: map[string]bool{"margin": true},
@@ -275,12 +275,12 @@ func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
 	t.Parallel()
 	tru := true
 	dst := playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
-		Keyboard: []string{"KeyA"},
+		Keyboard: keys("KeyA"),
 		Mouse:    &playlist.MousePrefs{Click: &tru},
 	}}
 	// An interaction object that mentions neither key must not disturb what is already there.
 	applyInteractionJSON(&dst, json.RawMessage(`{}`))
-	if len(dst.Interaction.Keyboard) != 1 || !boolVal(dst.Interaction.Mouse.Click) {
+	if keyCount(dst.Interaction.Keyboard) != 1 || !boolVal(dst.Interaction.Mouse.Click) {
 		t.Fatalf("empty interaction object overwrote lower layer: %+v", dst.Interaction)
 	}
 	// An empty mouse object is presence without keys: same rule one level down.
@@ -288,6 +288,23 @@ func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
 	if !boolVal(dst.Interaction.Mouse.Click) {
 		t.Fatalf("empty mouse object cleared click: %+v", dst.Interaction.Mouse)
 	}
+}
+
+// keys builds the optional keyboard list; keys() is an explicit empty list, not absence.
+func keys(k ...string) *[]string {
+	list := append([]string(nil), k...)
+	if list == nil {
+		list = []string{}
+	}
+	return &list
+}
+
+// keyCount reads the merged keyboard list; nil (no layer set it) reads as no keys.
+func keyCount(p *[]string) int {
+	if p == nil {
+		return 0
+	}
+	return len(*p)
 }
 
 // boolVal reads an optional interaction toggle: nil (no layer set it) reads as off.
@@ -456,7 +473,7 @@ func TestDisplayForItem_nestedInteractionAcrossInlineAndRef(t *testing.T) {
 	if boolVal(m.Drag) {
 		t.Error("mouse.drag was set by neither manifest")
 	}
-	if len(out.Interaction.Keyboard) != 0 {
+	if keyCount(out.Interaction.Keyboard) != 0 {
 		t.Errorf("an explicit empty keyboard must win, got %v", out.Interaction.Keyboard)
 	}
 }
@@ -481,7 +498,7 @@ func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
 			InlineManifest: rawManifest(t, manifest("inline")),
 			Display: &playlist.DisplayPrefs{
 				Interaction: &playlist.InteractionPrefs{
-					Keyboard: []string{},
+					Keyboard: keys(),
 					Mouse:    &playlist.MousePrefs{Click: &fal},
 				},
 			},
@@ -496,7 +513,7 @@ func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
 		if !boolVal(out.Interaction.Mouse.Scroll) {
 			t.Error("scroll was not mentioned by the item and must survive from the manifests")
 		}
-		if len(out.Interaction.Keyboard) != 0 {
+		if keyCount(out.Interaction.Keyboard) != 0 {
 			t.Errorf("item-local empty keyboard must revoke the manifest keys, got %v", out.Interaction.Keyboard)
 		}
 	})
@@ -522,7 +539,7 @@ func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
 		if !boolVal(out.Interaction.Mouse.Scroll) {
 			t.Error("scroll was not mentioned by the override and must survive")
 		}
-		if len(out.Interaction.Keyboard) != 0 {
+		if keyCount(out.Interaction.Keyboard) != 0 {
 			t.Errorf("override empty keyboard must revoke the manifest keys, got %v", out.Interaction.Keyboard)
 		}
 	})
@@ -530,25 +547,60 @@ func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
 
 // Defaults are the lowest layer, so overlays must not write back through the pointers they
 // inherit from it — a second item would otherwise start from a mutated baseline.
-func TestDisplayForItem_defaultsMousePointersNotAliased(t *testing.T) {
+func TestDisplayForItem_resultNeverSharesPointersWithDefaults(t *testing.T) {
 	t.Parallel()
-	tru, fal := true, false
+	tru := true
 	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{
-		Interaction: &playlist.InteractionPrefs{Mouse: &playlist.MousePrefs{Click: &tru}},
-	}}
-	item := playlist.PlaylistItem{
-		Source: "https://x",
-		Display: &playlist.DisplayPrefs{
-			Interaction: &playlist.InteractionPrefs{Mouse: &playlist.MousePrefs{Click: &fal}},
+		Autoplay: &tru,
+		Loop:     &tru,
+		Margin:   json.RawMessage(`"5%"`),
+		Interaction: &playlist.InteractionPrefs{
+			Keyboard: keys("KeyA"),
+			Mouse:    &playlist.MousePrefs{Click: &tru},
 		},
-	}
-	if _, err := DisplayForItem(def, nil, item); err != nil {
+	}}
+	item := playlist.PlaylistItem{Source: "https://x"}
+
+	// Assert pointer identity, not values: the hazard is a player writing through the returned
+	// prefs and mutating the defaults every later item starts from. Comparing values passes
+	// whether or not the copy happened, which is what made the earlier version of this test
+	// survive reverting the copy.
+	out, err := DisplayForItem(def, nil, item)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !boolVal(def.Display.Interaction.Mouse.Click) {
-		t.Fatal("merging wrote back into the playlist defaults")
+	d := def.Display
+	if out.Autoplay == d.Autoplay {
+		t.Error("Autoplay pointer shared with the playlist defaults")
 	}
-	if !tru || fal {
-		t.Fatal("the source booleans themselves were overwritten")
+	if out.Loop == d.Loop {
+		t.Error("Loop pointer shared with the playlist defaults")
+	}
+	if len(out.Margin) > 0 && &out.Margin[0] == &d.Margin[0] {
+		t.Error("Margin backing array shared with the playlist defaults")
+	}
+	if out.Interaction == d.Interaction {
+		t.Error("Interaction pointer shared with the playlist defaults")
+	}
+	if out.Interaction.Keyboard == d.Interaction.Keyboard {
+		t.Error("Keyboard pointer shared with the playlist defaults")
+	}
+	if out.Interaction.Mouse == d.Interaction.Mouse {
+		t.Error("Mouse pointer shared with the playlist defaults")
+	}
+	if out.Interaction.Mouse.Click == d.Interaction.Mouse.Click {
+		t.Error("Mouse.Click pointer shared with the playlist defaults")
+	}
+
+	// And the write itself, end to end: two items resolved from one Defaults must not see each
+	// other's edits.
+	*out.Autoplay = false
+	*out.Interaction.Mouse.Click = false
+	second, err := DisplayForItem(def, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !boolVal(second.Autoplay) || !boolVal(second.Interaction.Mouse.Click) {
+		t.Fatal("writing through one item's prefs changed the defaults for the next")
 	}
 }

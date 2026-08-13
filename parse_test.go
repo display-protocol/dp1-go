@@ -618,3 +618,26 @@ func TestInlineManifest_survivesStructRoundTripForSigning(t *testing.T) {
 		t.Fatalf("round-tripped document must still verify: ok=%v failed=%+v err=%v", ok, failed, err)
 	}
 }
+
+// Schema validation narrows the inline manifest but does not guarantee it decodes: JSON Schema
+// "integer" accepts any number with a zero fraction, while Go's int does not. Locked so the
+// doc on merge.ManifestForItem stays honest about the error being reachable.
+func TestInlineManifest_schemaValidButUndecodableNumber(t *testing.T) {
+	t.Parallel()
+	for _, w := range []string{"1e2", "100.0"} {
+		t.Run(w, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
+				"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+				"metadata":{"thumbnails":{"default":{"uri":"https://m.example/t.png","w":` + w + `}}}}}],
+				"signatures":[` + dummySignatureJSON + `]}`)
+			p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+			if err != nil {
+				t.Fatalf("schema must accept %s as an integer: %v", w, err)
+			}
+			if _, err := p.Items[0].ParseInlineManifest(); err == nil {
+				t.Fatalf("expected %s to fail decoding into int", w)
+			}
+		})
+	}
+}
