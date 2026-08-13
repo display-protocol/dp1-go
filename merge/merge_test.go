@@ -293,3 +293,87 @@ func TestDisplayForItem_badOverride(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// --- inline manifest (playlists extension §3.6) ---
+
+func manifestWithScaling(id, scaling string) *refmanifest.Manifest {
+	return &refmanifest.Manifest{
+		RefVersion: "0.1.0",
+		ID:         id,
+		Created:    "2025-01-01T00:00:00Z",
+		Locale:     "en",
+		Controls: &refmanifest.Controls{
+			Display: &refmanifest.DisplayControls{Scaling: scaling},
+		},
+	}
+}
+
+func TestDisplayForItem_inlineManifestOverlay(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: manifestWithScaling("inline", "stretch"),
+	}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "stretch" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+// Resolution order is defaults → inlineManifest → ref → override → item-local, so a fetched
+// ref manifest overrides the inline copy on the same key path.
+func TestDisplayForItem_refWinsOverInlineManifest(t *testing.T) {
+	t.Parallel()
+	loop := true
+	inline := manifestWithScaling("inline", "stretch")
+	inline.Controls.Display.Loop = &loop
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: inline}
+
+	out, err := DisplayForItem(nil, manifestWithScaling("remote", "fill"), item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "fill" {
+		t.Fatalf("ref must win on scaling, got %+v", out)
+	}
+	// Keys the ref manifest leaves unset still come from the inline copy.
+	if out.Loop == nil || !*out.Loop {
+		t.Fatalf("expected loop from inline manifest, got %+v", out)
+	}
+}
+
+func TestDisplayForItem_itemLocalWinsOverInlineManifest(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: manifestWithScaling("inline", "stretch"),
+		Display:        &playlist.DisplayPrefs{Scaling: "fit"},
+	}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "fit" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+func TestManifestForItem(t *testing.T) {
+	t.Parallel()
+	inline := manifestWithScaling("inline", "stretch")
+	remote := manifestWithScaling("remote", "fill")
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: inline}
+
+	if got := ManifestForItem(remote, item); got != remote {
+		t.Fatalf("ref must win, got %+v", got)
+	}
+	if got := ManifestForItem(nil, item); got != inline {
+		t.Fatalf("expected inline fallback, got %+v", got)
+	}
+	if got := ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x"}); got != nil {
+		t.Fatalf("expected nil, got %+v", got)
+	}
+}

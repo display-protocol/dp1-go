@@ -32,10 +32,16 @@ type Artist struct {
 }
 
 // Thumbnail references a preview image.
+//
+// Only URI is required. W and H are pointers because the ref-manifest schema relaxed
+// `required` from ["uri","w","h"] to ["uri"] (core changelog 2026-08-12): producers that
+// hold only a bare thumbnail URL omit the dimensions rather than guess, and consumers MUST
+// treat them as possibly absent. A nil pointer means "unknown", which a plain int could not
+// distinguish from a value the emitter actually wrote.
 type Thumbnail struct {
 	URI    string `json:"uri"`
-	W      int    `json:"w"`
-	H      int    `json:"h"`
+	W      *int   `json:"w,omitempty"`
+	H      *int   `json:"h,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
 }
 

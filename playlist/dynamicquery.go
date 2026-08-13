@@ -96,7 +96,7 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
 // in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
 // (itemsPath, itemMap) to obtain objects, validates each with
-// [validate.PlaylistItemWithPlaylistsExtension] (core PlaylistItem + note/displayAt overlay),
+// [validate.PlaylistItemWithPlaylistsExtension] (core PlaylistItem + note/displayAt/inlineManifest overlay),
 // and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this when
 // p.DynamicQuery is non-nil.
 //

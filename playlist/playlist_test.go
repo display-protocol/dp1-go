@@ -2,9 +2,11 @@ package playlist
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/display-protocol/dp1-go/extension/playlists"
+	"github.com/display-protocol/dp1-go/refmanifest"
 )
 
 func TestPlaylist_JSONRoundTrip(t *testing.T) {
@@ -185,5 +187,56 @@ func TestPlaylistItem_DisplayAt_NullAndEmpty(t *testing.T) {
 	}
 	if emptyItem.DisplayAt == nil || *emptyItem.DisplayAt != "" {
 		t.Fatalf("empty displayAt: got %#v, want pointer to empty string", emptyItem.DisplayAt)
+	}
+}
+
+// InlineManifest is the playlists-extension carriage of a full ref manifest (§3.6); it must
+// survive a round trip and stay absent from the wire form when unset, since core DP-1
+// documents never carry it.
+func TestPlaylistItem_InlineManifest_RoundTrip(t *testing.T) {
+	t.Parallel()
+	w, h := 1200, 900
+	item := PlaylistItem{
+		Source: "https://example.com/work.html",
+		InlineManifest: &refmanifest.Manifest{
+			RefVersion: "0.1.0",
+			ID:         "ref-9d26ecb3",
+			Created:    "2026-07-28T00:00:00Z",
+			Locale:     "en",
+			Metadata: &refmanifest.Metadata{
+				Title:   "Pre-Process",
+				Artists: []refmanifest.Artist{{Name: "Casey Reas"}},
+				Thumbnails: map[string]refmanifest.Thumbnail{
+					"default": {URI: "https://example.com/thumb.png", W: &w, H: &h},
+					"small":   {URI: "https://example.com/thumb-s.png"},
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(&item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out PlaylistItem
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.InlineManifest == nil || out.InlineManifest.ID != "ref-9d26ecb3" {
+		t.Fatalf("inlineManifest: %+v", out.InlineManifest)
+	}
+	th := out.InlineManifest.Metadata.Thumbnails
+	if th["default"].W == nil || *th["default"].W != 1200 {
+		t.Fatalf("default thumbnail width: %+v", th["default"])
+	}
+	if th["small"].W != nil || th["small"].H != nil {
+		t.Fatalf("expected absent dimensions to stay absent: %+v", th["small"])
+	}
+
+	bare, err := json.Marshal(&PlaylistItem{Source: "https://example.com/work.html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bare), "inlineManifest") {
+		t.Fatalf("unset inlineManifest must be omitted: %s", bare)
 	}
 }

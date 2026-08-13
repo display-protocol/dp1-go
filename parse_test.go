@@ -185,7 +185,7 @@ func TestParseAndValidateRefManifest(t *testing.T) {
 				{Name: "A"},
 			},
 			Thumbnails: map[string]refmanifest.Thumbnail{
-				"default": {URI: "ipfs://bafy", W: 100, H: 100},
+				"default": {URI: "ipfs://bafy", W: intPtr(100), H: intPtr(100)},
 			},
 		},
 	}
@@ -196,6 +196,124 @@ func TestParseAndValidateRefManifest(t *testing.T) {
 	}
 	if out.Metadata.Title != "Work" {
 		t.Fatal(out.Metadata.Title)
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+// dummySignatureJSON is schema-valid but cryptographically meaningless. ParseAndValidate*
+// only runs JSON Schema, so tests that target schema shape use it instead of signing —
+// keeping the assertion on the field under test rather than on signature plumbing.
+const dummySignatureJSON = `{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+	"ts":"2025-01-01T00:00:00Z",
+	"payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	"role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`
+
+func dummySignature(t *testing.T) playlist.Signature {
+	t.Helper()
+	var s playlist.Signature
+	if err := json.Unmarshal([]byte(dummySignatureJSON), &s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// Thumbnail.w / Thumbnail.h were dropped from the ref-manifest required list
+// (core changelog 2026-08-12): a bare thumbnail URL must validate on its own.
+func TestParseAndValidateRefManifest_thumbnailWithoutDimensions(t *testing.T) {
+	t.Parallel()
+	m := refmanifest.Manifest{
+		RefVersion: "0.1.0",
+		ID:         "ref-1",
+		Created:    "2025-06-01T12:00:00Z",
+		Locale:     "en",
+		Metadata: &refmanifest.Metadata{
+			Thumbnails: map[string]refmanifest.Thumbnail{
+				"default": {URI: "https://example.com/thumb.png"},
+			},
+		},
+	}
+	data, _ := json.Marshal(m)
+	if strings.Contains(string(data), `"w"`) || strings.Contains(string(data), `"h"`) {
+		t.Fatalf("absent dimensions must not marshal: %s", data)
+	}
+	out, err := dp1.ParseAndValidateRefManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := out.Metadata.Thumbnails["default"]
+	if th.W != nil || th.H != nil {
+		t.Fatalf("expected nil dimensions, got w=%v h=%v", th.W, th.H)
+	}
+}
+
+func TestParseAndValidateRefManifest_rejectsZeroThumbnailWidth(t *testing.T) {
+	t.Parallel()
+	// w stays constrained when present (minimum 1); only the requirement was relaxed.
+	doc := []byte(`{"refVersion":"0.1.0","id":"ref-1","created":"2025-06-01T12:00:00Z","locale":"en",
+		"metadata":{"thumbnails":{"default":{"uri":"https://example.com/t.png","w":0,"h":10}}}}`)
+	if _, err := dp1.ParseAndValidateRefManifest(doc); err == nil {
+		t.Fatal("expected validation error for w=0")
+	}
+}
+
+// Playlists extension §3.6: an item may carry a full ref manifest inline, validated by the
+// unmodified ref-manifest schema.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_inlineManifest(t *testing.T) {
+	t.Parallel()
+	pl := playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "Inline",
+		Items: []playlist.PlaylistItem{{
+			Source: "https://example.com/work.html",
+			InlineManifest: &refmanifest.Manifest{
+				RefVersion: "0.1.0",
+				ID:         "ref-9d26ecb3",
+				Created:    "2026-07-28T00:00:00Z",
+				Locale:     "en",
+				Metadata: &refmanifest.Metadata{
+					Title:   "Pre-Process",
+					Artists: []refmanifest.Artist{{Name: "Casey Reas"}},
+					Thumbnails: map[string]refmanifest.Thumbnail{
+						"default": {URI: "https://example.com/thumb.png"},
+					},
+				},
+			},
+		}},
+		Signatures: []playlist.Signature{dummySignature(t)},
+	}
+	data, _ := json.Marshal(pl)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := out.Items[0].InlineManifest
+	if im == nil || im.ID != "ref-9d26ecb3" || im.Metadata.Title != "Pre-Process" {
+		t.Fatalf("inlineManifest: %+v", im)
+	}
+}
+
+func TestParseAndValidatePlaylistWithPlaylistsExtension_rejectsMalformedInlineManifest(t *testing.T) {
+	t.Parallel()
+	// Missing the required `locale` envelope field: invalid exactly as a fetched manifest would be.
+	doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
+		"inlineManifest":{"refVersion":"0.1.0","id":"ref-1","created":"2026-07-28T00:00:00Z"}}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	_, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err == nil {
+		t.Fatal("expected validation error for malformed inlineManifest")
+	}
+	assertValidationErrorChain(t, err)
+}
+
+// Core DP-1 tolerates unknown fields, so inlineManifest must pass the core-only path untouched.
+func TestParseAndValidatePlaylist_coreIgnoresInlineManifest(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
+		"inlineManifest":{"refVersion":"0.1.0","id":"ref-1","created":"2026-07-28T00:00:00Z"}}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	if _, err := dp1.ParseAndValidatePlaylist(doc); err != nil {
+		t.Fatal(err)
 	}
 }
 

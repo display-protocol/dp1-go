@@ -6,6 +6,7 @@ import (
 
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
+	"github.com/display-protocol/dp1-go/refmanifest"
 )
 
 // Playlist is a DP-1 playlist (v1.0.x legacy signature and/or v1.1+ multi-signature).
@@ -58,6 +59,14 @@ type PlaylistItem struct {
 	// Nil means the field is absent (evergreen when displayAt scheduling is active). A non-nil pointer
 	// (including to "") means the field is present; unresolvable values are not eligible (§3.5.5).
 	DisplayAt *string `json:"displayAt,omitempty"`
+	// InlineManifest carries a complete Ref Manifest inline instead of behind Ref (§3.6).
+	// It is the same document with the same schema — the extension overlay $refs the unmodified
+	// ref-manifest schema — so a malformed inline manifest invalidates the playlist.
+	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
+	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
+	// No refHash counterpart exists: these bytes are inside the playlist and are already covered
+	// by the playlist signature (core §7.1).
+	InlineManifest *refmanifest.Manifest `json:"inlineManifest,omitempty"`
 }
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).

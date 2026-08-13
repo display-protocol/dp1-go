@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dp1.feralfile.com/extensions/playlists/v0.2.0/schema.json",
   "title": "DP-1 Playlist Extension",
-  "description": "Extensions to DP-1 playlists for dynamic item fetching, enhanced metadata, optional intermission notes, and displayAt scheduling",
+  "description": "Extensions to DP-1 playlists for dynamic item fetching, enhanced metadata, optional intermission notes, displayAt scheduling, and inline Ref Manifest carriage (inlineManifest)",
   "type": "object",
   "properties": {
     "note": {
@@ -10,17 +10,9 @@
     },
     "items": {
       "type": "array",
-      "description": "Per-item extension fields. Composed with the core playlist schema via allOf: each element must still satisfy PlaylistItem from the bundle, and may include optional note and displayAt.",
+      "description": "Per-item extension fields. Composed with the core playlist schema via allOf: each element must still satisfy PlaylistItem from the bundle, and may include optional note, displayAt, and inlineManifest.",
       "items": {
-        "type": "object",
-        "properties": {
-          "note": {
-            "$ref": "#/$defs/Note"
-          },
-          "displayAt": {
-            "$ref": "#/$defs/DisplayAt"
-          }
-        }
+        "$ref": "#/$defs/PlaylistItemExtension"
       }
     },
     "curators": {
@@ -47,6 +39,22 @@
     }
   },
   "$defs": {
+    "PlaylistItemExtension": {
+      "type": "object",
+      "description": "The playlists-extension overlay applied to a single PlaylistItem. Defined once here and referenced by both composed schemas (playlist_with_extension.json via this fragment's items, and playlist_item_with_extension.json directly) so the two validation paths cannot drift.",
+      "properties": {
+        "note": {
+          "$ref": "#/$defs/Note"
+        },
+        "displayAt": {
+          "$ref": "#/$defs/DisplayAt"
+        },
+        "inlineManifest": {
+          "$ref": "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json",
+          "description": "A full DP-1 Ref Manifest document carried inline — same schema and validation as a manifest fetched via ref. When both are present, ref overrides inlineManifest."
+        }
+      }
+    },
     "DisplayAt": {
       "description": "ISO 8601 subset when this item becomes eligible for playback. Local datetime without timezone: display-locale local. RFC 3339 date-time with Z or offset (hours 00-23, minutes 00-59): absolute/global. Date-only (YYYY-MM-DD) is not accepted. Top-level item field (same level as source), not inside display. Patterns are syntactic only; invalid calendar values are rejected at resolve time.",
       "oneOf": [
@@ -70,7 +78,9 @@
     "Note": {
       "type": "object",
       "description": "Experimental intermission card: short artist-authored text between works. May be removed or changed in a future Playlist Extension version.",
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "properties": {
         "text": {
           "type": "string",
@@ -89,11 +99,14 @@
     "Entity": {
       "type": "object",
       "description": "Unified entity format for curators and publishers with verifiable identities",
-      "required": ["name", "key"],
+      "required": [
+        "name",
+        "key"
+      ],
       "properties": {
         "name": {
           "type": "string",
-          "description": "Entity display name"
+          "description": "Entity display name. Required but MAY be empty: wallet-based publishers can emit the signing identity with an empty name. Consumers MUST NOT reject a document because an entity name is empty; display SHOULD fall back to the key."
         },
         "key": {
           "type": "string",
@@ -110,12 +123,19 @@
     "DynamicQuery": {
       "type": "object",
       "description": "Machine-executable interface for fetching playlist items dynamically from external indexers",
-      "required": ["profile", "endpoint", "responseMapping"],
+      "required": [
+        "profile",
+        "endpoint",
+        "responseMapping"
+      ],
       "properties": {
         "profile": {
           "type": "string",
           "description": "Resolution profile with version",
-          "enum": ["https-json-v1", "graphql-v1"]
+          "enum": [
+            "https-json-v1",
+            "graphql-v1"
+          ]
         },
         "endpoint": {
           "type": "string",
@@ -125,7 +145,10 @@
         "method": {
           "type": "string",
           "description": "HTTP method (default: POST for graphql-v1, GET for https-json-v1)",
-          "enum": ["GET", "POST"]
+          "enum": [
+            "GET",
+            "POST"
+          ]
         },
         "headers": {
           "type": "object",
@@ -147,18 +170,28 @@
     "ResponseMapping": {
       "type": "object",
       "description": "Configuration for extracting playlist items from indexer response",
-      "required": ["itemsPath", "itemSchema"],
+      "required": [
+        "itemsPath",
+        "itemSchema"
+      ],
       "properties": {
         "itemsPath": {
           "type": "string",
           "description": "JSON path to the array of items (dot notation)",
-          "examples": ["data.works", "artworks", "data.userWorks"]
+          "examples": [
+            "data.works",
+            "artworks",
+            "data.userWorks"
+          ]
         },
         "itemSchema": {
           "type": "string",
           "description": "Schema identifier referencing DP-1 version",
           "pattern": "^dp1/\\d+\\.\\d+$",
-          "examples": ["dp1/1.0", "dp1/1.1"]
+          "examples": [
+            "dp1/1.0",
+            "dp1/1.1"
+          ]
         },
         "itemMap": {
           "type": "object",

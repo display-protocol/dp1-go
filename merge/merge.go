@@ -1,5 +1,9 @@
 // Package merge applies DP-1 resolution order for display (and related) fields on an item:
-// defaults → ref manifest → item override (JSON) → item-local fields (last wins for the same path).
+// defaults → item inlineManifest → ref manifest → item override (JSON) → item-local fields
+// (last wins for the same path).
+//
+// The inlineManifest slot sits immediately below ref (playlists extension §3.6): a manifest
+// fetched via ref is authoritative and the inline copy is the offline/degraded fallback.
 package merge
 
 import (
@@ -10,15 +14,15 @@ import (
 )
 
 // DisplayForItem returns merged display preferences for an item.
-// ref may be nil if no manifest was fetched.
+// ref may be nil if no manifest was fetched; item.InlineManifest (if any) is applied
+// underneath it, so callers do not pass the inline manifest separately.
 func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item playlist.PlaylistItem) (*playlist.DisplayPrefs, error) {
 	var base playlist.DisplayPrefs
 	if def != nil && def.Display != nil {
 		base = *cloneDisplay(def.Display)
 	}
-	if ref != nil && ref.Controls != nil && ref.Controls.Display != nil {
-		applyDisplayJSON(&base, ref.Controls.Display)
-	}
+	applyManifestDisplay(&base, item.InlineManifest)
+	applyManifestDisplay(&base, ref)
 	if len(item.Override) > 0 {
 		var ov struct {
 			Duration *float64               `json:"duration,omitempty"`
@@ -38,6 +42,30 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 		return nil, nil
 	}
 	return &base, nil
+}
+
+// ManifestForItem returns the ref manifest a player should read for an item, applying the
+// §3.6 precedence: a manifest fetched via ref wins over the item's inlineManifest, which in
+// turn serves offline or degraded-fetch paths. Pass a nil ref when no fetch was made (or it
+// failed) to fall back to the inline copy. Returns nil when neither is present.
+//
+// This resolves the whole document, not per-field: the two manifests are alternative carriages
+// of one document (§3.6), so they are not merged key by key. Display controls are the exception
+// and are layered by [DisplayForItem].
+func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) *refmanifest.Manifest {
+	if ref != nil {
+		return ref
+	}
+	return item.InlineManifest
+}
+
+// applyManifestDisplay overlays one manifest's display controls, tolerating a nil manifest or
+// a manifest without controls so callers can chain inline and fetched manifests in order.
+func applyManifestDisplay(dst *playlist.DisplayPrefs, m *refmanifest.Manifest) {
+	if m == nil || m.Controls == nil || m.Controls.Display == nil {
+		return
+	}
+	applyDisplayJSON(dst, m.Controls.Display)
 }
 
 func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
