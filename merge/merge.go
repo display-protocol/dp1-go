@@ -87,8 +87,17 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	c := *d
 	if d.Interaction != nil {
 		ip := *d.Interaction
+		if d.Interaction.Keyboard != nil {
+			ip.Keyboard = append([]string(nil), d.Interaction.Keyboard...)
+		}
 		if d.Interaction.Mouse != nil {
-			mp := *d.Interaction.Mouse
+			// Copying the struct would alias the caller's *bool fields, so a later overlay
+			// writing through them would reach back into the playlist defaults.
+			mp := playlist.MousePrefs{}
+			overlayBool(&mp.Click, d.Interaction.Mouse.Click)
+			overlayBool(&mp.Scroll, d.Interaction.Mouse.Scroll)
+			overlayBool(&mp.Drag, d.Interaction.Mouse.Drag)
+			overlayBool(&mp.Hover, d.Interaction.Mouse.Hover)
 			ip.Mouse = &mp
 		}
 		c.Interaction = &ip
@@ -101,6 +110,17 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 		c.UserOverrides = m
 	}
 	return &c
+}
+
+// overlayBool writes src over dst only when src carries a value, copying it so layers never
+// alias one another's pointers. A nil src leaves the lower layer's decision in place — the
+// distinction that lets an item turn an interaction off rather than only on.
+func overlayBool(dst **bool, src *bool) {
+	if src == nil {
+		return
+	}
+	v := *src
+	*dst = &v
 }
 
 func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
@@ -125,7 +145,9 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 		if dst.Interaction == nil {
 			dst.Interaction = &playlist.InteractionPrefs{}
 		}
-		if len(src.Interaction.Keyboard) > 0 {
+		// Presence, not emptiness: an explicit "keyboard": [] revokes the keys a lower layer
+		// allowed, so only a nil slice means "said nothing".
+		if src.Interaction.Keyboard != nil {
 			dst.Interaction.Keyboard = append([]string(nil), src.Interaction.Keyboard...)
 		}
 		if src.Interaction.Mouse != nil {
@@ -134,18 +156,10 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 			}
 			m := dst.Interaction.Mouse
 			sm := src.Interaction.Mouse
-			if sm.Click {
-				m.Click = sm.Click
-			}
-			if sm.Scroll {
-				m.Scroll = sm.Scroll
-			}
-			if sm.Drag {
-				m.Drag = sm.Drag
-			}
-			if sm.Hover {
-				m.Hover = sm.Hover
-			}
+			overlayBool(&m.Click, sm.Click)
+			overlayBool(&m.Scroll, sm.Scroll)
+			overlayBool(&m.Drag, sm.Drag)
+			overlayBool(&m.Hover, sm.Hover)
 		}
 	}
 	if len(src.UserOverrides) > 0 {
@@ -220,18 +234,10 @@ func applyInteractionJSON(dst *playlist.DisplayPrefs, raw json.RawMessage) {
 			dst.Interaction.Mouse = &playlist.MousePrefs{}
 		}
 		m := dst.Interaction.Mouse
-		if src.Mouse.Click != nil {
-			m.Click = *src.Mouse.Click
-		}
-		if src.Mouse.Scroll != nil {
-			m.Scroll = *src.Mouse.Scroll
-		}
-		if src.Mouse.Drag != nil {
-			m.Drag = *src.Mouse.Drag
-		}
-		if src.Mouse.Hover != nil {
-			m.Hover = *src.Mouse.Hover
-		}
+		overlayBool(&m.Click, src.Mouse.Click)
+		overlayBool(&m.Scroll, src.Mouse.Scroll)
+		overlayBool(&m.Drag, src.Mouse.Drag)
+		overlayBool(&m.Hover, src.Mouse.Hover)
 	}
 }
 

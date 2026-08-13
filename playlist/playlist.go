@@ -111,17 +111,25 @@ type DisplayPrefs struct {
 }
 
 // InteractionPrefs configures input (keyboard / mouse).
+//
+// Keyboard distinguishes absent (nil) from an explicit empty list, which the merge order needs:
+// "keyboard": [] is how a higher-precedence layer revokes keys a lower one allowed.
 type InteractionPrefs struct {
 	Keyboard []string    `json:"keyboard,omitempty"`
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 
 // MousePrefs toggles pointer interactions.
+//
+// Pointers for the same reason Autoplay and Loop are pointers: nil means the layer said nothing
+// and a lower one stands, while false is an explicit revocation. Plain bools made false
+// indistinguishable from absent, so an item could never switch off an interaction its playlist
+// defaults or ref manifest had enabled.
 type MousePrefs struct {
-	Click  bool `json:"click,omitempty"`
-	Scroll bool `json:"scroll,omitempty"`
-	Drag   bool `json:"drag,omitempty"`
-	Hover  bool `json:"hover,omitempty"`
+	Click  *bool `json:"click,omitempty"`
+	Scroll *bool `json:"scroll,omitempty"`
+	Drag   *bool `json:"drag,omitempty"`
+	Hover  *bool `json:"hover,omitempty"`
 }
 
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).

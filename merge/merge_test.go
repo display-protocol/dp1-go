@@ -196,7 +196,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Autoplay: &fal,
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"KeyA"},
-				Mouse:    &playlist.MousePrefs{Click: true},
+				Mouse:    &playlist.MousePrefs{Click: &tru},
 			},
 			UserOverrides: map[string]bool{"scaling": true},
 		},
@@ -226,7 +226,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Scaling: "auto",
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"Enter"},
-				Mouse:    &playlist.MousePrefs{Hover: true},
+				Mouse:    &playlist.MousePrefs{Hover: &tru},
 			},
 			UserOverrides: map[string]bool{"margin": true},
 		},
@@ -273,21 +273,25 @@ func Test_applyDisplayJSON_invalidInteractionIgnored(t *testing.T) {
 
 func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
 	t.Parallel()
+	tru := true
 	dst := playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
 		Keyboard: []string{"KeyA"},
-		Mouse:    &playlist.MousePrefs{Click: true},
+		Mouse:    &playlist.MousePrefs{Click: &tru},
 	}}
 	// An interaction object that mentions neither key must not disturb what is already there.
 	applyInteractionJSON(&dst, json.RawMessage(`{}`))
-	if len(dst.Interaction.Keyboard) != 1 || !dst.Interaction.Mouse.Click {
+	if len(dst.Interaction.Keyboard) != 1 || !boolVal(dst.Interaction.Mouse.Click) {
 		t.Fatalf("empty interaction object overwrote lower layer: %+v", dst.Interaction)
 	}
 	// An empty mouse object is presence without keys: same rule one level down.
 	applyInteractionJSON(&dst, json.RawMessage(`{"mouse":{}}`))
-	if !dst.Interaction.Mouse.Click {
+	if !boolVal(dst.Interaction.Mouse.Click) {
 		t.Fatalf("empty mouse object cleared click: %+v", dst.Interaction.Mouse)
 	}
 }
+
+// boolVal reads an optional interaction toggle: nil (no layer set it) reads as off.
+func boolVal(p *bool) bool { return p != nil && *p }
 
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
@@ -440,19 +444,111 @@ func TestDisplayForItem_nestedInteractionAcrossInlineAndRef(t *testing.T) {
 		t.Fatalf("got %+v", out)
 	}
 	m := out.Interaction.Mouse
-	if !m.Click {
+	if !boolVal(m.Click) {
 		t.Error("mouse.click from the inline manifest was cleared by a ref that never mentions it")
 	}
-	if !m.Scroll {
+	if !boolVal(m.Scroll) {
 		t.Error("mouse.scroll from the ref manifest was not applied")
 	}
-	if m.Hover {
+	if boolVal(m.Hover) {
 		t.Error("mouse.hover:false in the ref manifest must override the inline true")
 	}
-	if m.Drag {
+	if boolVal(m.Drag) {
 		t.Error("mouse.drag was set by neither manifest")
 	}
 	if len(out.Interaction.Keyboard) != 0 {
 		t.Errorf("an explicit empty keyboard must win, got %v", out.Interaction.Keyboard)
+	}
+}
+
+// Review F1 regression: the layers above a manifest must be able to switch an interaction off,
+// not only on. Item-local display and override.display both carry explicit false and an empty
+// keyboard through to the result, over anything an inline or fetched manifest enabled.
+func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
+	t.Parallel()
+	fal := false
+	manifest := func(id string) *refmanifest.Manifest {
+		m := manifestWithScaling(id, "")
+		m.Controls.Display.Interaction = json.RawMessage(
+			`{"keyboard":["KeyA","Space"],"mouse":{"click":true,"scroll":true}}`)
+		return m
+	}
+
+	t.Run("item_display", func(t *testing.T) {
+		t.Parallel()
+		item := playlist.PlaylistItem{
+			Source:         "https://x",
+			InlineManifest: rawManifest(t, manifest("inline")),
+			Display: &playlist.DisplayPrefs{
+				Interaction: &playlist.InteractionPrefs{
+					Keyboard: []string{},
+					Mouse:    &playlist.MousePrefs{Click: &fal},
+				},
+			},
+		}
+		out, err := DisplayForItem(nil, manifest("remote"), item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if boolVal(out.Interaction.Mouse.Click) {
+			t.Error("item-local click:false must switch off what the manifests enabled")
+		}
+		if !boolVal(out.Interaction.Mouse.Scroll) {
+			t.Error("scroll was not mentioned by the item and must survive from the manifests")
+		}
+		if len(out.Interaction.Keyboard) != 0 {
+			t.Errorf("item-local empty keyboard must revoke the manifest keys, got %v", out.Interaction.Keyboard)
+		}
+	})
+
+	t.Run("override_display", func(t *testing.T) {
+		t.Parallel()
+		item := playlist.PlaylistItem{
+			Source:         "https://x",
+			InlineManifest: rawManifest(t, manifest("inline")),
+			Override: json.RawMessage(
+				`{"display":{"interaction":{"keyboard":[],"mouse":{"click":false,"hover":true}}}}`),
+		}
+		out, err := DisplayForItem(nil, nil, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if boolVal(out.Interaction.Mouse.Click) {
+			t.Error("override click:false must switch off what the inline manifest enabled")
+		}
+		if !boolVal(out.Interaction.Mouse.Hover) {
+			t.Error("override hover:true was dropped")
+		}
+		if !boolVal(out.Interaction.Mouse.Scroll) {
+			t.Error("scroll was not mentioned by the override and must survive")
+		}
+		if len(out.Interaction.Keyboard) != 0 {
+			t.Errorf("override empty keyboard must revoke the manifest keys, got %v", out.Interaction.Keyboard)
+		}
+	})
+}
+
+// Defaults are the lowest layer, so overlays must not write back through the pointers they
+// inherit from it — a second item would otherwise start from a mutated baseline.
+func TestDisplayForItem_defaultsMousePointersNotAliased(t *testing.T) {
+	t.Parallel()
+	tru, fal := true, false
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{
+		Interaction: &playlist.InteractionPrefs{Mouse: &playlist.MousePrefs{Click: &tru}},
+	}}
+	item := playlist.PlaylistItem{
+		Source: "https://x",
+		Display: &playlist.DisplayPrefs{
+			Interaction: &playlist.InteractionPrefs{Mouse: &playlist.MousePrefs{Click: &fal}},
+		},
+	}
+	if _, err := DisplayForItem(def, nil, item); err != nil {
+		t.Fatal(err)
+	}
+	if !boolVal(def.Display.Interaction.Mouse.Click) {
+		t.Fatal("merging wrote back into the playlist defaults")
+	}
+	if !tru || fal {
+		t.Fatal("the source booleans themselves were overwritten")
 	}
 }
