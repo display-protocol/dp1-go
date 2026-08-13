@@ -196,7 +196,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Scaling:  "fit",
 			Autoplay: &fal,
 			Interaction: &playlist.InteractionPrefs{
-				Keyboard: keys("KeyA"),
+				Keyboard: playlist.Keys("KeyA"),
 				Mouse:    &playlist.MousePrefs{Click: &tru},
 			},
 			UserOverrides: map[string]bool{"scaling": true},
@@ -226,7 +226,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 		Display: &playlist.DisplayPrefs{
 			Scaling: "auto",
 			Interaction: &playlist.InteractionPrefs{
-				Keyboard: keys("Enter"),
+				Keyboard: playlist.Keys("Enter"),
 				Mouse:    &playlist.MousePrefs{Hover: &tru},
 			},
 			UserOverrides: map[string]bool{"margin": true},
@@ -276,7 +276,7 @@ func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
 	t.Parallel()
 	tru := true
 	dst := playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
-		Keyboard: keys("KeyA"),
+		Keyboard: playlist.Keys("KeyA"),
 		Mouse:    &playlist.MousePrefs{Click: &tru},
 	}}
 	// An interaction object that mentions neither key must not disturb what is already there.
@@ -289,15 +289,6 @@ func Test_applyInteractionJSON_absentKeysLeaveLowerLayer(t *testing.T) {
 	if !boolVal(dst.Interaction.Mouse.Click) {
 		t.Fatalf("empty mouse object cleared click: %+v", dst.Interaction.Mouse)
 	}
-}
-
-// keys builds the optional keyboard list; keys() is an explicit empty list, not absence.
-func keys(k ...string) *[]string {
-	list := append([]string(nil), k...)
-	if list == nil {
-		list = []string{}
-	}
-	return &list
 }
 
 // keyCount reads the merged keyboard list; nil (no layer set it) reads as no keys.
@@ -499,7 +490,7 @@ func TestDisplayForItem_itemLocalRevokesManifestInteraction(t *testing.T) {
 			InlineManifest: rawManifest(t, manifest("inline")),
 			Display: &playlist.DisplayPrefs{
 				Interaction: &playlist.InteractionPrefs{
-					Keyboard: keys(),
+					Keyboard: playlist.Keys(),
 					Mouse:    &playlist.MousePrefs{Click: &fal},
 				},
 			},
@@ -556,7 +547,7 @@ func TestDisplayForItem_resultNeverSharesPointersWithDefaults(t *testing.T) {
 		Loop:     &tru,
 		Margin:   json.RawMessage(`"5%"`),
 		Interaction: &playlist.InteractionPrefs{
-			Keyboard: keys("KeyA"),
+			Keyboard: playlist.Keys("KeyA"),
 			Mouse:    &playlist.MousePrefs{Click: &tru},
 		},
 	}}
@@ -615,13 +606,13 @@ func TestDisplayForItem_emptyKeyboardEncodesAsArray(t *testing.T) {
 	sources := map[string]func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem){
 		"defaults": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
 			return &playlist.Defaults{Display: &playlist.DisplayPrefs{
-				Interaction: &playlist.InteractionPrefs{Keyboard: keys()},
+				Interaction: &playlist.InteractionPrefs{Keyboard: playlist.Keys()},
 			}}, nil, playlist.PlaylistItem{Source: "https://x"}
 		},
 		"item_display": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
 			return nil, nil, playlist.PlaylistItem{
 				Source:  "https://x",
-				Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{Keyboard: keys()}},
+				Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{Keyboard: playlist.Keys()}},
 			}
 		},
 		"override": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {

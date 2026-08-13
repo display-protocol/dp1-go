@@ -135,6 +135,20 @@ type MousePrefs struct {
 	Hover  *bool `json:"hover,omitempty"`
 }
 
+// Bool returns a pointer to v, for the optional toggles in [MousePrefs] and [DisplayPrefs].
+func Bool(v bool) *bool { return &v }
+
+// Keys returns a pointer to the given keyboard list for [InteractionPrefs].
+//
+// Keys() with no arguments is an explicit empty list, which revokes the keys a lower layer
+// allowed. That is not the same as leaving Keyboard nil, which says nothing and lets the lower
+// layer stand.
+func Keys(keys ...string) *[]string {
+	list := make([]string, len(keys))
+	copy(list, keys)
+	return &list
+}
+
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).
 type ReproBlock struct {
 	EngineVersion map[string]string `json:"engineVersion,omitempty"`
