@@ -63,8 +63,9 @@ var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 // ResolveDynamicQuery resolves the playlists extension dynamicQuery on p, when present.
 // It calls [PlaylistItemsFromDynamicQuery] with p.DynamicQuery and appends the returned items
 // after any existing static items. The receiver is not modified; a new [Playlist] value is returned.
-// The copy is shallow below item level: nested pointer fields on items (Display, Note, Repro,
-// Provenance, InlineManifest) are shared with the receiver, so treat them as read-only.
+// The copy is shallow below item level: pointer fields on items (Duration, Display, Note,
+// Repro, Provenance, InlineManifest) are shared with the receiver, so treat them as read-only.
+// Only Override and DisplayAt are copied.
 //
 // If p.DynamicQuery is nil, returns a clone of p with no network I/O. If p is nil, returns an
 // error wrapping [ErrDynamicQueryRequest].
@@ -503,16 +504,18 @@ func applyItemMap(raw json.RawMessage, itemMap map[string]string) (json.RawMessa
 // narrower than they look. Both exist because the item slice copy shares whatever the items
 // point at, so a write through the clone lands in the receiver: for Override that includes a
 // later append landing in the same backing array, and for DisplayAt a plain `*it.DisplayAt =`.
-// Everything else hanging off an item — Display, Note, Repro, Provenance, InlineManifest —
-// stays shared, so the same write reaches the receiver there and is simply not defended
-// against. TestResolveDynamicQuery_clonePlaylistBranches locks the two that are: it writes
-// through the clone's DisplayAt and asserts the receiver is unchanged.
+// Every other pointer on an item — Duration, Display, Note, Repro, Provenance,
+// InlineManifest — stays shared, so the same write reaches the receiver there and is simply
+// not defended against. Duration is the one that makes the boundary look arbitrary: it is a
+// scalar pointer exactly like DisplayAt, and only DisplayAt is copied.
+// TestResolveDynamicQuery_clonePlaylistBranches locks the two that are: it writes through the
+// clone's DisplayAt and asserts the receiver is unchanged.
 //
 // So the contract is on callers: treat those nested values on the returned playlist as
 // read-only, and copy before mutating (for example before filling in thumbnail dimensions on
-// an InlineManifest after probing the image). Deepening the copy to cover all five is a
-// reasonable future change; doing it for InlineManifest alone would only make the sharing
-// harder to reason about.
+// an InlineManifest after probing the image). Deepening the copy to cover every item pointer
+// is a reasonable future change; doing it for InlineManifest alone would only make the
+// sharing harder to reason about.
 func clonePlaylist(p *Playlist) *Playlist {
 	c := *p
 	if len(p.Items) > 0 {
