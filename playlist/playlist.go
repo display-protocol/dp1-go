@@ -59,26 +59,21 @@ type PlaylistItem struct {
 	// Nil means the field is absent (evergreen when displayAt scheduling is active). A non-nil pointer
 	// (including to "") means the field is present; unresolvable values are not eligible (§3.5.5).
 	DisplayAt *string `json:"displayAt,omitempty"`
-	// InlineManifest carries a complete Ref Manifest inline instead of behind Ref (§3.6).
-	// It is the same document with the same schema — the extension overlay $refs the unmodified
-	// ref-manifest schema — so a malformed inline manifest invalidates the document on the
-	// playlists-extension validation path. On the core-only path the core schema tolerates it
-	// as an unknown field and nothing checks it — but tolerance stops at the schema: because
-	// this type exists, a value whose JSON types do not fit it (a string where the manifest
-	// goes, "1200" for a thumbnail width) fails the decode step of ParseAndValidatePlaylist,
-	// which core DP-1 §3.6 would have let a core-only player ignore. Pre-existing shape —
-	// Note and DisplayAt behave the same way — but this field widens it to a whole subtree.
-	// Parse with ParseAndValidatePlaylistWithPlaylistsExtension before acting on this field.
+	// InlineManifest carries a complete Ref Manifest inline instead of behind Ref (§3.6):
+	// the same document, checked by the unmodified ref-manifest schema, so a malformed one
+	// invalidates the playlist on the playlists-extension path. The core schema does not
+	// describe the field, so parse with ParseAndValidatePlaylistWithPlaylistsExtension before
+	// acting on it — though the typed field still constrains the core path, where a JSON type
+	// mismatch inside the manifest fails the decode step on a schema-accepted document.
+	//
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
-	// No refHash counterpart exists: these bytes are inside the playlist and are already covered
-	// by the playlist signature (core §7.1). "These bytes" is literal — sign and verify against
-	// the raw document, never against a re-marshaled struct. This type is not a byte-faithful
-	// representation: omitempty drops fields that are present-but-empty on the wire, and the
-	// §3.6 example manifest carries exactly such a field (an artist with "id": ""), so a
-	// decode/re-encode round trip changes the JCS payload and invalidates the signature.
-	// The sign package already works on raw bytes; keep the originals when a document must
-	// stay verifiable.
+	//
+	// No refHash counterpart exists: these bytes are inside the playlist and are already
+	// covered by the playlist signature (core §7.1) — literally those bytes, so sign and verify
+	// the raw document. This type is not byte-faithful: omitempty drops present-but-empty
+	// fields such as the artist "id": "" in the §3.6 example, so a decode/re-encode round trip
+	// changes the JCS payload and breaks verification.
 	InlineManifest *refmanifest.Manifest `json:"inlineManifest,omitempty"`
 }
 

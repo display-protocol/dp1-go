@@ -5,12 +5,9 @@
 // The inlineManifest slot sits immediately below ref (playlists extension §3.6): a manifest
 // fetched via ref is authoritative and the inline copy is the offline/degraded fallback.
 //
-// This package is not a validation boundary: it overlays whatever manifests it is handed.
-// item.InlineManifest is only schema-checked when the playlist was parsed with the playlists
-// extension (dp1.ParseAndValidatePlaylistWithPlaylistsExtension); the core-only parser
-// tolerates it as an unknown field. A fetched ref manifest is likewise the caller's to
-// validate (dp1.ParseAndValidateRefManifest). Overlay unvalidated manifests and values the
-// schema would reject — a scaling outside the enum, say — reach the returned DisplayPrefs.
+// This package is not a validation boundary: it overlays whatever manifests it is handed, so
+// values the schema would reject reach the result. item.InlineManifest is schema-checked only
+// when the playlist was parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
 package merge
 
 import (

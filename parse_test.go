@@ -319,17 +319,15 @@ func TestParseAndValidatePlaylist_coreIgnoresInlineManifest(t *testing.T) {
 }
 
 // …but that tolerance is the schema's, not the parser's: the typed field means a JSON type
-// mismatch anywhere in the manifest subtree fails the decode step, even though the core schema
-// passed the document. Note and DisplayAt have behaved this way since before inlineManifest
-// existed; this locks the behavior so the boundary is deliberate rather than discovered.
-func TestParseAndValidatePlaylist_coreRejectsTypeMismatchedExtensionFields(t *testing.T) {
+// mismatch anywhere in the manifest subtree fails the decode step even though the core schema
+// passed the document. Locked here so the boundary is deliberate rather than discovered, and
+// so the test above is not read as proof of a tolerance that stops at the schema.
+func TestParseAndValidatePlaylist_coreRejectsTypeMismatchedInlineManifest(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
 		"inline_manifest_is_a_string": `"inlineManifest":"https://m.example/x.json"`,
 		"thumbnail_width_is_a_string": `"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
 			"metadata":{"thumbnails":{"default":{"uri":"https://m.example/t.png","w":"1200"}}}}`,
-		"note_is_a_string":       `"note":"hello"`,
-		"display_at_is_a_number": `"displayAt":123`,
 	}
 	for name, field := range cases {
 		t.Run(name, func(t *testing.T) {

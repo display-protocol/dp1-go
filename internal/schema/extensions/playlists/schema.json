@@ -78,9 +78,7 @@
     "Note": {
       "type": "object",
       "description": "Experimental intermission card: short artist-authored text between works. May be removed or changed in a future Playlist Extension version.",
-      "required": [
-        "text"
-      ],
+      "required": ["text"],
       "properties": {
         "text": {
           "type": "string",
@@ -99,14 +97,11 @@
     "Entity": {
       "type": "object",
       "description": "Unified entity format for curators and publishers with verifiable identities",
-      "required": [
-        "name",
-        "key"
-      ],
+      "required": ["name", "key"],
       "properties": {
         "name": {
           "type": "string",
-          "description": "Entity display name. Required but MAY be empty: wallet-based publishers can emit the signing identity with an empty name. Consumers MUST NOT reject a document because an entity name is empty; display SHOULD fall back to the key."
+          "description": "Entity display name"
         },
         "key": {
           "type": "string",
@@ -123,19 +118,12 @@
     "DynamicQuery": {
       "type": "object",
       "description": "Machine-executable interface for fetching playlist items dynamically from external indexers",
-      "required": [
-        "profile",
-        "endpoint",
-        "responseMapping"
-      ],
+      "required": ["profile", "endpoint", "responseMapping"],
       "properties": {
         "profile": {
           "type": "string",
           "description": "Resolution profile with version",
-          "enum": [
-            "https-json-v1",
-            "graphql-v1"
-          ]
+          "enum": ["https-json-v1", "graphql-v1"]
         },
         "endpoint": {
           "type": "string",
@@ -145,10 +133,7 @@
         "method": {
           "type": "string",
           "description": "HTTP method (default: POST for graphql-v1, GET for https-json-v1)",
-          "enum": [
-            "GET",
-            "POST"
-          ]
+          "enum": ["GET", "POST"]
         },
         "headers": {
           "type": "object",
@@ -170,28 +155,18 @@
     "ResponseMapping": {
       "type": "object",
       "description": "Configuration for extracting playlist items from indexer response",
-      "required": [
-        "itemsPath",
-        "itemSchema"
-      ],
+      "required": ["itemsPath", "itemSchema"],
       "properties": {
         "itemsPath": {
           "type": "string",
           "description": "JSON path to the array of items (dot notation)",
-          "examples": [
-            "data.works",
-            "artworks",
-            "data.userWorks"
-          ]
+          "examples": ["data.works", "artworks", "data.userWorks"]
         },
         "itemSchema": {
           "type": "string",
           "description": "Schema identifier referencing DP-1 version",
           "pattern": "^dp1/\\d+\\.\\d+$",
-          "examples": [
-            "dp1/1.0",
-            "dp1/1.1"
-          ]
+          "examples": ["dp1/1.0", "dp1/1.1"]
         },
         "itemMap": {
           "type": "object",
