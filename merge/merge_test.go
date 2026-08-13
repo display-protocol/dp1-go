@@ -2,6 +2,7 @@ package merge
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/display-protocol/dp1-go/playlist"
@@ -602,5 +603,65 @@ func TestDisplayForItem_resultNeverSharesPointersWithDefaults(t *testing.T) {
 	}
 	if !boolVal(second.Autoplay) || !boolVal(second.Interaction.Mouse.Click) {
 		t.Fatal("writing through one item's prefs changed the defaults for the next")
+	}
+}
+
+// The merged prefs get serialized by players (caching, flattening defaults into items, shipping
+// to a device), so assert on the wire form, not on a helper that collapses nil and empty. An
+// empty keyboard must survive as [] — "keyboard": null is rejected by the core playlist schema
+// and decodes back to absence, silently undoing the revocation.
+func TestDisplayForItem_emptyKeyboardEncodesAsArray(t *testing.T) {
+	t.Parallel()
+	sources := map[string]func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem){
+		"defaults": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
+			return &playlist.Defaults{Display: &playlist.DisplayPrefs{
+				Interaction: &playlist.InteractionPrefs{Keyboard: keys()},
+			}}, nil, playlist.PlaylistItem{Source: "https://x"}
+		},
+		"item_display": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
+			return nil, nil, playlist.PlaylistItem{
+				Source:  "https://x",
+				Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{Keyboard: keys()}},
+			}
+		},
+		"override": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
+			return nil, nil, playlist.PlaylistItem{
+				Source:   "https://x",
+				Override: json.RawMessage(`{"display":{"interaction":{"keyboard":[]}}}`),
+			}
+		},
+		"manifest": func() (*playlist.Defaults, *refmanifest.Manifest, playlist.PlaylistItem) {
+			m := manifestWithScaling("r", "")
+			m.Controls.Display.Interaction = json.RawMessage(`{"keyboard":[]}`)
+			return nil, m, playlist.PlaylistItem{Source: "https://x"}
+		},
+	}
+	for name, build := range sources {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			def, ref, item := build()
+			out, err := DisplayForItem(def, ref, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(b), `"keyboard":[]`) {
+				t.Fatalf("empty keyboard must encode as an array, got %s", b)
+			}
+			// And it must still read back as an explicit revocation, not as absence.
+			var back playlist.DisplayPrefs
+			if err := json.Unmarshal(b, &back); err != nil {
+				t.Fatal(err)
+			}
+			if back.Interaction == nil || back.Interaction.Keyboard == nil {
+				t.Fatalf("re-decoded prefs lost the revocation: %s", b)
+			}
+			if len(*back.Interaction.Keyboard) != 0 {
+				t.Fatalf("expected an empty list, got %v", *back.Interaction.Keyboard)
+			}
+		})
 	}
 }

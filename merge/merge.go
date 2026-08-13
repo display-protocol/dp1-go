@@ -100,10 +100,7 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	}
 	if d.Interaction != nil {
 		ip := *d.Interaction
-		if d.Interaction.Keyboard != nil {
-			kb := append([]string(nil), *d.Interaction.Keyboard...)
-			ip.Keyboard = &kb
-		}
+		ip.Keyboard = copyKeyboard(d.Interaction.Keyboard)
 		if d.Interaction.Mouse != nil {
 			mp := playlist.MousePrefs{}
 			overlayBool(&mp.Click, d.Interaction.Mouse.Click)
@@ -122,6 +119,20 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 		c.UserOverrides = m
 	}
 	return &c
+}
+
+// copyKeyboard duplicates an optional keyboard list, preserving the absent/empty distinction
+// on both sides of a round trip. It must allocate even for an empty list: append on a nil
+// slice returns nil, and a non-nil *[]string holding a nil slice marshals as "keyboard": null,
+// which the schema rejects (the field is an array) and which decodes back to a nil pointer —
+// erasing the very revocation the pointer type exists to carry.
+func copyKeyboard(src *[]string) *[]string {
+	if src == nil {
+		return nil
+	}
+	kb := make([]string, len(*src))
+	copy(kb, *src)
+	return &kb
 }
 
 // overlayBool writes src over dst only when src carries a value, copying it so layers never
@@ -160,8 +171,7 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 		// Presence, not emptiness: an explicit "keyboard": [] revokes the keys a lower layer
 		// allowed, so only a nil slice means "said nothing".
 		if src.Interaction.Keyboard != nil {
-			kb := append([]string(nil), *src.Interaction.Keyboard...)
-			dst.Interaction.Keyboard = &kb
+			dst.Interaction.Keyboard = copyKeyboard(src.Interaction.Keyboard)
 		}
 		if src.Interaction.Mouse != nil {
 			if dst.Interaction.Mouse == nil {
@@ -240,8 +250,7 @@ func applyInteractionJSON(dst *playlist.DisplayPrefs, raw json.RawMessage) {
 		dst.Interaction = &playlist.InteractionPrefs{}
 	}
 	if src.Keyboard != nil {
-		kb := append([]string(nil), *src.Keyboard...)
-		dst.Interaction.Keyboard = &kb
+		dst.Interaction.Keyboard = copyKeyboard(src.Keyboard)
 	}
 	if src.Mouse != nil {
 		if dst.Interaction.Mouse == nil {

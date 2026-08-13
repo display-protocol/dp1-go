@@ -1000,9 +1000,10 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 		},
 		Items: []PlaylistItem{
 			{
-				Source:    "https://static",
-				DisplayAt: strPtr("2026-07-21T00:00:00Z"),
-				Override:  json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				Source:         "https://static",
+				DisplayAt:      strPtr("2026-07-21T00:00:00Z"),
+				Override:       json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				InlineManifest: json.RawMessage(`{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en"}`),
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -1047,9 +1048,16 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	if out.DynamicQuery == orig.DynamicQuery || out.DynamicQuery.Headers["X-Test"] != "1" {
 		t.Fatal("expected cloned dynamicQuery")
 	}
+	// Both raw-JSON fields must have distinct backing arrays: they carry spare capacity, so an
+	// append through the clone would otherwise land in the receiver's buffer.
 	if len(orig.Items[0].Override) > 0 {
 		if &out.Items[0].Override[0] == &orig.Items[0].Override[0] {
 			t.Fatal("expected cloned item override buffer")
+		}
+	}
+	if len(orig.Items[0].InlineManifest) > 0 {
+		if &out.Items[0].InlineManifest[0] == &orig.Items[0].InlineManifest[0] {
+			t.Fatal("expected cloned item inlineManifest buffer")
 		}
 	}
 	if len(out.Items) != 2 {
