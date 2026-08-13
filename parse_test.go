@@ -520,3 +520,48 @@ func TestCodedError_and_WithCode(t *testing.T) {
 		}
 	})
 }
+
+// §3.6 puts the inline manifest's bytes inside the signed payload, so signing and verifying
+// must run on the raw document. The typed structs are not byte-faithful: omitempty drops
+// present-but-empty fields, and the §3.6 example manifest has one (an artist with "id": "").
+// This locks both halves — raw bytes verify, a re-marshaled struct does not — so the hazard
+// is a tested property rather than something a caller discovers as a bogus sigInvalid.
+func TestInlineManifest_signOverRawBytesNotStructRoundTrip(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	body := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://example.com/a",` +
+		`"inlineManifest":{"refVersion":"0.1.0","id":"ref-9d26ecb3","created":"2026-07-28T00:00:00Z","locale":"en",` +
+		`"metadata":{"title":"Pre-Process","artists":[{"name":"Casey Reas","id":""}]}}}]}`)
+	sig, err := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2026-07-28T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigJSON, _ := json.Marshal([]playlist.Signature{sig})
+	signed := append(body[:len(body)-1], []byte(`,"signatures":`+string(sigJSON)+`}`)...)
+
+	if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed); err != nil {
+		t.Fatal(err)
+	}
+	ok, failed, err := sign.VerifyPlaylistSignatures(signed)
+	if err != nil || !ok {
+		t.Fatalf("raw bytes must verify: ok=%v failed=%+v err=%v", ok, failed, err)
+	}
+
+	// Same document, re-encoded from the decoded structs: the empty artist id is gone, so the
+	// JCS payload differs and the signature no longer matches.
+	decoded, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remarshaled, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(remarshaled), `"id":""`) {
+		t.Fatal("expected omitempty to drop the empty artist id; update this test if Artist.ID changed")
+	}
+	ok, _, err = sign.VerifyPlaylistSignatures(remarshaled)
+	if err == nil && ok {
+		t.Fatal("re-marshaled document verified: struct round trip is now byte-faithful, so the warning on PlaylistItem.InlineManifest is stale")
+	}
+}

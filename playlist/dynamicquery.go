@@ -499,12 +499,17 @@ func applyItemMap(raw json.RawMessage, itemMap map[string]string) (json.RawMessa
 // signature/curator slices, defaults, and the dynamicQuery block it hydrates — so resolving
 // never mutates the receiver.
 //
-// It is deliberately not a deep copy of the whole document. Nested pointers hanging off an
-// item (Display, Note, Repro, Provenance, InlineManifest) stay shared with the receiver:
-// resolution only appends items, so copying those trees would be cost with no isolation to
-// show for it. The contract that follows is on callers — treat those nested values on the
-// returned playlist as read-only, and copy before mutating (for example before filling in
-// thumbnail dimensions on an InlineManifest after probing the image).
+// It is deliberately not a deep copy of the whole document, and the per-item copies below are
+// narrower than they look. Override is copied because aliasing a byte slice is write-through:
+// a later append on either side can land in the other's backing array. DisplayAt is copied
+// because scheduling callers do rewrite it in place. Everything else hanging off an item —
+// Display, Note, Repro, Provenance, InlineManifest — stays shared with the receiver.
+//
+// So the contract is on callers: treat those nested values on the returned playlist as
+// read-only, and copy before mutating (for example before filling in thumbnail dimensions on
+// an InlineManifest after probing the image). Deepening the copy to cover all five is a
+// reasonable future change; doing it for InlineManifest alone would only make the sharing
+// harder to reason about.
 func clonePlaylist(p *Playlist) *Playlist {
 	c := *p
 	if len(p.Items) > 0 {

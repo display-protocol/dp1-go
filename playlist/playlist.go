@@ -68,7 +68,13 @@ type PlaylistItem struct {
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
 	// No refHash counterpart exists: these bytes are inside the playlist and are already covered
-	// by the playlist signature (core §7.1).
+	// by the playlist signature (core §7.1). "These bytes" is literal — sign and verify against
+	// the raw document, never against a re-marshaled struct. This type is not a byte-faithful
+	// representation: omitempty drops fields that are present-but-empty on the wire, and the
+	// §3.6 example manifest carries exactly such a field (an artist with "id": ""), so a
+	// decode/re-encode round trip changes the JCS payload and invalidates the signature.
+	// The sign package already works on raw bytes; keep the originals when a document must
+	// stay verifiable.
 	InlineManifest *refmanifest.Manifest `json:"inlineManifest,omitempty"`
 }
 

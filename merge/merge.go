@@ -23,6 +23,12 @@ import (
 // DisplayForItem returns merged display preferences for an item.
 // ref may be nil if no manifest was fetched; item.InlineManifest (if any) is applied
 // underneath it, so callers do not pass the inline manifest separately.
+//
+// Note this resolves per key while [ManifestForItem] resolves per document: a key the fetched
+// ref manifest leaves unset still comes from the inline copy here, even though ManifestForItem
+// would have discarded that copy wholesale. That follows the spec — ref-manifest §7 is
+// explicitly last-write-wins within the same key path — but the two functions can disagree
+// about where a given value came from.
 func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item playlist.PlaylistItem) (*playlist.DisplayPrefs, error) {
 	var base playlist.DisplayPrefs
 	if def != nil && def.Display != nil {
