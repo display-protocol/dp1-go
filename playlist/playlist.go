@@ -111,42 +111,21 @@ type DisplayPrefs struct {
 }
 
 // InteractionPrefs configures input (keyboard / mouse).
-//
-// Keyboard is a pointer for the same reason MousePrefs uses pointers: the merge order needs
-// absent (nil) to differ from an explicit empty list, since "keyboard": [] is how a
-// higher-precedence layer revokes keys a lower one allowed. A plain slice would survive
-// decoding but not encoding — omitempty erases an empty list, so parsing a playlist and
-// writing it back would silently turn a revocation into "said nothing".
 type InteractionPrefs struct {
-	Keyboard *[]string   `json:"keyboard,omitempty"`
+	Keyboard []string    `json:"keyboard,omitempty"`
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 
 // MousePrefs toggles pointer interactions.
 //
-// Pointers for the same reason Autoplay and Loop are pointers: nil means the layer said nothing
-// and a lower one stands, while false is an explicit revocation. Plain bools made false
-// indistinguishable from absent, so an item could never switch off an interaction its playlist
-// defaults or ref manifest had enabled.
+// These are plain bools, so an explicit false is indistinguishable from an absent key and the
+// merge order cannot express a revocation: see #6, which changes them to pointers. Left as they
+// are here to keep this change to the two spec updates it implements.
 type MousePrefs struct {
-	Click  *bool `json:"click,omitempty"`
-	Scroll *bool `json:"scroll,omitempty"`
-	Drag   *bool `json:"drag,omitempty"`
-	Hover  *bool `json:"hover,omitempty"`
-}
-
-// Bool returns a pointer to v, for the optional toggles in [MousePrefs] and [DisplayPrefs].
-func Bool(v bool) *bool { return &v }
-
-// Keys returns a pointer to the given keyboard list for [InteractionPrefs].
-//
-// Keys() with no arguments is an explicit empty list, which revokes the keys a lower layer
-// allowed. That is not the same as leaving Keyboard nil, which says nothing and lets the lower
-// layer stand.
-func Keys(keys ...string) *[]string {
-	list := make([]string, len(keys))
-	copy(list, keys)
-	return &list
+	Click  bool `json:"click,omitempty"`
+	Scroll bool `json:"scroll,omitempty"`
+	Drag   bool `json:"drag,omitempty"`
+	Hover  bool `json:"hover,omitempty"`
 }
 
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).

@@ -136,7 +136,7 @@ prefs, err := merge.DisplayForItem(def, refManifest, item)
 
 `item.InlineManifest` is applied automatically, so pass `nil` for `refManifest` when no manifest was fetched. `merge.ManifestForItem(refManifest, item)` returns the manifest a player should read for non-display fields (metadata, i18n): a fetched `ref` wins, the inline copy is the offline/degraded fallback. Both return an error if the item's inline manifest cannot be decoded — the normal case for playlists parsed on the core-only path, where nothing has checked the field. `DisplayForItem` returns it only when `refManifest` is nil: with an authoritative manifest in hand the inline fallback goes unread, so a malformed one does not block rendering.
 
-Every layer resolves per key by field presence, so a higher-precedence layer can switch an interaction off as well as on: `playlist.MousePrefs` fields are `*bool` and `playlist.InteractionPrefs.Keyboard` is `*[]string` (nil = the layer said nothing; `false` or `[]` = explicit revocation). Build them with `playlist.Bool(false)` and `playlist.Keys()`. These types changed shape in v0.6.0 — see [CHANGELOG.md](CHANGELOG.md) for the migration.
+Known gap: interaction settings resolve by Go zero value rather than field presence, so a higher-precedence layer can switch an interaction on but not off, and a manifest's `mouse` block replaces the lower layer's wholesale ([#6](https://github.com/display-protocol/dp1-go/issues/6)).
 
 ### Extension types (optional)
 
@@ -146,7 +146,7 @@ Shared and extension-specific structs live under `extension/` (for example `exte
 
 ## Breaking changes
 
-This module is `v0.x`; minor versions may break source compatibility. v0.6.0 changes three exported types (`refmanifest.Thumbnail.W`/`.H`, `playlist.MousePrefs` fields, `playlist.InteractionPrefs.Keyboard`) so that an absent value is distinguishable from a zero one. [CHANGELOG.md](CHANGELOG.md) has the rationale and before/after for each.
+This module is `v0.x`; minor versions may break source compatibility. v0.6.0 changes `refmanifest.Thumbnail.W`/`.H` from `int` to `*int` so that an absent dimension is distinguishable from a zero one. [CHANGELOG.md](CHANGELOG.md) has the rationale and before/after.
 
 Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute eligible items when any item has `displayAt`. Per §3.5.6, the same rules apply whether items came from static `items` or `dynamicQuery`.
 

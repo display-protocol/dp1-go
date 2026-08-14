@@ -5,23 +5,28 @@ compatibility; every break is listed here with the migration.
 
 ## Unreleased — v0.6.0
 
-Aligns the SDK with two DP-1 spec changes. Three exported types change shape, all for the same
-reason: a field that can be **absent** must not be represented by a Go zero value that also means
-something. Each break is source-breaking but mechanical, and the compiler finds every site.
+Aligns the SDK with two DP-1 spec changes: inline carriage of a Ref Manifest on a playlist item
+(Playlist Extension §3.6) and the relaxation of the ref-manifest `Thumbnail` requirements.
 
 ### Added
 
 - `playlist.PlaylistItem.InlineManifest` (`json.RawMessage`) — a complete Ref Manifest carried on
-  an item instead of behind `ref` (Playlist Extension §3.6). Decode it with
-  `PlaylistItem.ParseInlineManifest()`, or pass the raw bytes to `dp1.ParseAndValidateRefManifest`
-  for decode plus schema validation.
+  an item instead of behind `ref` (§3.6). Decode it with `PlaylistItem.ParseInlineManifest()`, or
+  pass the raw bytes to `dp1.ParseAndValidateRefManifest` for decode plus schema validation.
+
+  Raw JSON rather than a decoded manifest for two reasons. The core schema describes no extension
+  field and core DP-1 tolerates unknown ones, so a core-only player must be able to parse a
+  playlist carrying an `inlineManifest` it does not implement — a typed field would fail the
+  decode step on documents the core schema had just accepted. And the bytes are covered by the
+  playlist signature with no `refHash` counterpart, so they must survive a decode/re-encode
+  unchanged; re-encoding a decoded manifest drops present-but-empty fields (the artist `"id": ""`
+  in the §3.6 example) and changes the JCS payload.
 - `merge.ManifestForItem(ref, item)` — the §3.6 precedence for non-display fields: a fetched
   `ref` manifest wins, the inline copy is the offline fallback.
-- `playlist.Bool` and `playlist.Keys` — constructors for the optional fields below.
 
 ### Changed (breaking)
 
-**1. `refmanifest.Thumbnail.W` / `.H`: `int` → `*int`**
+**`refmanifest.Thumbnail.W` / `.H`: `int` → `*int`**
 
 The ref-manifest schema no longer requires `w`/`h` (core changelog 2026-08-12); producers holding
 only a bare thumbnail URL omit them, and consumers must treat them as possibly absent. With `int`,
@@ -39,52 +44,15 @@ w, h := 1200, 900
 th := refmanifest.Thumbnail{URI: "…", W: &w, H: &h}
 ```
 
-**2. `playlist.MousePrefs.{Click,Scroll,Drag,Hover}`: `bool` → `*bool`**
+### Known gaps
 
-**3. `playlist.InteractionPrefs.Keyboard`: `[]string` → `*[]string`**
+Found while implementing the above, tracked separately so this release stays scoped to the two
+spec changes:
 
-Inline manifests mean two manifests now stack (`defaults → inlineManifest → ref → override →
-item-local`), so a layer must be able to *revoke* an interaction, not only grant it. With plain
-`bool`, `false` was indistinguishable from absent, so `mouse.click: false` on an item could not
-switch off what a manifest had enabled — the merge order said the item wins, and it did not. The
-same applied to `"keyboard": []`, whose `omitempty` also erased the revocation on re-encoding.
-
-This matches `DisplayPrefs.Autoplay` and `Loop`, which were already `*bool` for this reason.
-
-```go
-// before
-mouse := &playlist.MousePrefs{Click: true}
-kb := &playlist.InteractionPrefs{Keyboard: []string{"KeyA"}}
-if mouse.Click { … }
-for _, k := range kb.Keyboard { … }
-
-// after
-mouse := &playlist.MousePrefs{Click: playlist.Bool(true)}
-kb := &playlist.InteractionPrefs{Keyboard: playlist.Keys("KeyA")}
-if mouse.Click != nil && *mouse.Click { … }
-if kb.Keyboard != nil { for _, k := range *kb.Keyboard { … } }
-```
-
-`playlist.Keys()` with no arguments is an explicit empty list — a revocation — which is not the
-same as leaving the field nil.
-
-**Why not keep the exported types and track presence privately?** A private flag can only be set
-by the JSON decoder, so a caller building a playlist in Go could never express an explicit
-`false` — revocation would work for parsed documents and silently not work for constructed ones.
-It would also not remove the API change: `merge` lives in another package and would need exported
-accessors to read that state.
-
-### Fixed
-
-- `merge.DisplayForItem` merges a manifest's `interaction` block by JSON field presence. A ref
-  manifest setting only `mouse.scroll` no longer erases a `mouse.click` an inline manifest set.
-- `merge.DisplayForItem` no longer returns display preferences that share pointers with the
-  playlist defaults. Writing through the result used to corrupt the baseline for every later item.
-- `refmanifest.Thumbnail` decodes every JSON spelling of an integer the schema accepts. JSON
-  Schema `integer` is a mathematical property, not a syntax, so `1e2` and `100.0` are valid
-  widths; `encoding/json` refuses all but `100`, which left schema-valid manifests — and whole
-  conforming playlists carrying one inline — undecodable. Strings, fractions and values outside
-  `int` are still rejected, so the decoder is never laxer than the schema.
-- `merge.DisplayForItem` no longer fails on a malformed inline manifest when a fetched `ref` is
-  present. §3.6 makes the fetched manifest authoritative and the inline copy the fallback, so a
-  fallback nobody reads must not prevent rendering.
+- [#6](https://github.com/display-protocol/dp1-go/issues/6) — interaction settings merge by Go
+  zero value, so a higher-precedence layer can only switch an interaction on, never off, and a
+  manifest's `mouse` block replaces the lower layer's wholesale. Predates inline manifests but is
+  easier to reach now that two manifests stack.
+- [#7](https://github.com/display-protocol/dp1-go/issues/7) — `merge.DisplayForItem` returns
+  pointers into the playlist defaults, and thumbnail dimensions spelled `1e2` or `100.0` validate
+  against the schema but fail to decode into `int`.
