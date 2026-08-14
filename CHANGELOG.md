@@ -44,15 +44,42 @@ w, h := 1200, 900
 th := refmanifest.Thumbnail{URI: "…", W: &w, H: &h}
 ```
 
+**`playlist.MousePrefs.{Click,Scroll,Drag,Hover}`: `bool` → `*bool`**
+
+**`playlist.InteractionPrefs.Keyboard`: `[]string` → `*[]string`**
+
+A layer must be able to *revoke* an interaction, not only grant it, and with plain `bool` an
+explicit `false` was indistinguishable from absent — so `mouse.click: false` on an item could not
+switch off what a manifest had enabled, and `"keyboard": []` was a no-op that `omitempty` also
+erased on re-encoding. This matches `DisplayPrefs.Autoplay` and `Loop`, already `*bool` for the
+same reason. Keeping the exported types and tracking presence privately was rejected: only the
+JSON decoder could set such a flag, so a caller building a playlist in Go could never express an
+explicit `false`.
+
+```go
+// before
+mouse := &playlist.MousePrefs{Click: true}
+kb := &playlist.InteractionPrefs{Keyboard: []string{"KeyA"}}
+if mouse.Click { … }
+
+// after
+mouse := &playlist.MousePrefs{Click: playlist.Bool(true)}
+kb := &playlist.InteractionPrefs{Keyboard: playlist.Keys("KeyA")}
+if mouse.Click != nil && *mouse.Click { … }
+```
+
+`playlist.Keys()` with no arguments is an explicit empty list — a revocation — not absence.
+
+### Fixed
+
+- A manifest's `interaction` block merges by JSON field presence. A ref manifest setting only
+  `mouse.scroll` no longer erases a `mouse.click` a lower layer set.
+
 ### Known gaps
 
 Found while implementing the above, tracked separately so this release stays scoped to the two
 spec changes:
 
-- [#6](https://github.com/display-protocol/dp1-go/issues/6) — interaction settings merge by Go
-  zero value, so a higher-precedence layer can only switch an interaction on, never off, and a
-  manifest's `mouse` block replaces the lower layer's wholesale. Predates inline manifests but is
-  easier to reach now that two manifests stack.
 - [#7](https://github.com/display-protocol/dp1-go/issues/7) — `merge.DisplayForItem` returns
   pointers into the playlist defaults, and thumbnail dimensions spelled `1e2` or `100.0` validate
   against the schema but fail to decode into `int`.

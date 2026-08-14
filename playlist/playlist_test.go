@@ -256,3 +256,31 @@ func TestPlaylistItem_ParseInlineManifest_absentAndInvalid(t *testing.T) {
 		}
 	}
 }
+
+// Keys() must build an empty list, not a nil one: a nil slice behind a non-nil pointer marshals
+// as "keyboard": null, which the schema rejects and which decodes back to absence — turning the
+// revocation the caller asked for into "said nothing".
+func TestKeysAndBool(t *testing.T) {
+	t.Parallel()
+	if got := Bool(false); got == nil || *got {
+		t.Fatalf("Bool(false) = %v", got)
+	}
+	empty := Keys()
+	if empty == nil || *empty == nil || len(*empty) != 0 {
+		t.Fatalf("Keys() = %v", empty)
+	}
+	b, err := json.Marshal(&InteractionPrefs{Keyboard: empty, Mouse: &MousePrefs{Click: Bool(false)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"keyboard":[],"mouse":{"click":false}}` {
+		t.Fatalf("explicit empty/false must survive encoding, got %s", b)
+	}
+	// And the populated form copies its input rather than aliasing the caller's slice.
+	src := []string{"KeyA"}
+	got := Keys(src...)
+	src[0] = "KeyB"
+	if (*got)[0] != "KeyA" {
+		t.Fatalf("Keys aliased the caller's slice: %v", *got)
+	}
+}
