@@ -114,8 +114,13 @@ func PlaylistItem(data []byte) error {
 }
 
 // PlaylistItemWithPlaylistsExtension validates a single playlist item against core
-// PlaylistItem composed with the playlists-extension item overlay (optional note and
-// displayAt). This is the item validator used by dynamicQuery acceptance.
+// PlaylistItem composed with the playlists-extension item overlay (optional note,
+// displayAt, and inlineManifest). This is the item validator used by dynamicQuery
+// acceptance.
+//
+// Both composed schemas ($defs/PlaylistItemExtension in the extension fragment) share one
+// definition of that overlay, so single-item and whole-playlist validation cannot drift —
+// a malformed inlineManifest is rejected on either path (playlists extension §4.5.1).
 func PlaylistItemWithPlaylistsExtension(data []byte) error {
 	return validateAgainst(playlistItemWithPlaylistsExtensionSchemaURL, data)
 }

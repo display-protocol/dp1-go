@@ -293,3 +293,135 @@ func TestDisplayForItem_badOverride(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// --- inline manifest (playlists extension §3.6) ---
+
+// rawManifest renders a manifest to the wire form PlaylistItem.InlineManifest holds.
+func rawManifest(t *testing.T, m *refmanifest.Manifest) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func manifestWithScaling(id, scaling string) *refmanifest.Manifest {
+	return &refmanifest.Manifest{
+		RefVersion: "0.1.0",
+		ID:         id,
+		Created:    "2025-01-01T00:00:00Z",
+		Locale:     "en",
+		Controls: &refmanifest.Controls{
+			Display: &refmanifest.DisplayControls{Scaling: scaling},
+		},
+	}
+}
+
+func TestDisplayForItem_inlineManifestOverlay(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch")),
+	}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "stretch" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+// Resolution order is defaults → inlineManifest → ref → override → item-local, so a fetched
+// ref manifest overrides the inline copy on the same key path.
+func TestDisplayForItem_refWinsOverInlineManifest(t *testing.T) {
+	t.Parallel()
+	loop := true
+	inline := manifestWithScaling("inline", "stretch")
+	inline.Controls.Display.Loop = &loop
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, inline)}
+
+	out, err := DisplayForItem(nil, manifestWithScaling("remote", "fill"), item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "fill" {
+		t.Fatalf("ref must win on scaling, got %+v", out)
+	}
+	// Keys the ref manifest leaves unset still come from the inline copy.
+	if out.Loop == nil || !*out.Loop {
+		t.Fatalf("expected loop from inline manifest, got %+v", out)
+	}
+}
+
+func TestDisplayForItem_itemLocalWinsOverInlineManifest(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch")),
+		Display:        &playlist.DisplayPrefs{Scaling: "fit"},
+	}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Scaling != "fit" {
+		t.Fatalf("got %+v", out)
+	}
+}
+
+func TestManifestForItem(t *testing.T) {
+	t.Parallel()
+	remote := manifestWithScaling("remote", "fill")
+	item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, manifestWithScaling("inline", "stretch"))}
+
+	got, err := ManifestForItem(remote, item)
+	if err != nil || got != remote {
+		t.Fatalf("ref must win, got %+v err=%v", got, err)
+	}
+	got, err = ManifestForItem(nil, item)
+	if err != nil || got == nil || got.ID != "inline" {
+		t.Fatalf("expected inline fallback, got %+v err=%v", got, err)
+	}
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil || got != nil {
+		t.Fatalf("expected nil, got %+v err=%v", got, err)
+	}
+	// A core-parsed playlist can carry anything under inlineManifest; the decode error is the
+	// only place that surfaces, and it must not be mistaken for "no manifest".
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x", InlineManifest: json.RawMessage(`"not-a-manifest"`)})
+	if err == nil || got != nil {
+		t.Fatalf("expected decode error, got %+v err=%v", got, err)
+	}
+	got, err = ManifestForItem(nil, playlist.PlaylistItem{Source: "https://x", InlineManifest: json.RawMessage(`null`)})
+	if err != nil || got != nil {
+		t.Fatalf("JSON null must read as absent, got %+v err=%v", got, err)
+	}
+}
+
+// A malformed inline manifest is fatal only when nothing can replace it. With no ref fetched
+// there is no fallback, so the error must surface — swallowing it would hand a caller on the
+// core-only path prefs quietly missing the inline layer. With a ref in hand §3.6 makes the
+// fetched manifest authoritative and the inline copy goes unread, so it must not block
+// rendering a conforming playlist.
+func TestDisplayForItem_badInlineManifest(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{
+		Source:         "https://x",
+		InlineManifest: json.RawMessage(`"https://m.example/x.json"`),
+	}
+
+	out, err := DisplayForItem(nil, nil, item)
+	if err == nil || out != nil {
+		t.Fatalf("no ref: expected decode error, got %+v err=%v", out, err)
+	}
+
+	out, err = DisplayForItem(nil, manifestWithScaling("remote", "fill"), item)
+	if err != nil {
+		t.Fatalf("an unread inline fallback must not block the authoritative ref: %v", err)
+	}
+	if out == nil || out.Scaling != "fill" {
+		t.Fatalf("expected the ref manifest to be applied, got %+v", out)
+	}
+}

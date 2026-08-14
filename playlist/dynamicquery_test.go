@@ -1000,9 +1000,10 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 		},
 		Items: []PlaylistItem{
 			{
-				Source:    "https://static",
-				DisplayAt: strPtr("2026-07-21T00:00:00Z"),
-				Override:  json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				Source:         "https://static",
+				DisplayAt:      strPtr("2026-07-21T00:00:00Z"),
+				Override:       json.RawMessage(`{"display":{"scaling":"fill"}}`),
+				InlineManifest: json.RawMessage(`{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en"}`),
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -1047,9 +1048,16 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	if out.DynamicQuery == orig.DynamicQuery || out.DynamicQuery.Headers["X-Test"] != "1" {
 		t.Fatal("expected cloned dynamicQuery")
 	}
+	// Both raw-JSON fields must have distinct backing arrays: they carry spare capacity, so an
+	// append through the clone would otherwise land in the receiver's buffer.
 	if len(orig.Items[0].Override) > 0 {
 		if &out.Items[0].Override[0] == &orig.Items[0].Override[0] {
 			t.Fatal("expected cloned item override buffer")
+		}
+	}
+	if len(orig.Items[0].InlineManifest) > 0 {
+		if &out.Items[0].InlineManifest[0] == &orig.Items[0].InlineManifest[0] {
+			t.Fatal("expected cloned item inlineManifest buffer")
 		}
 	}
 	if len(out.Items) != 2 {
@@ -1092,5 +1100,101 @@ func TestResolveDynamicQuery_httpsJSONPost(t *testing.T) {
 	}
 	if len(out.Items) != 2 || out.Items[1].Title != "P" {
 		t.Fatalf("%+v", out.Items)
+	}
+}
+
+// §4.5.1 names inlineManifest among the fields the item overlay checks on dynamicQuery
+// acceptance, so a manifest arriving from an indexer is validated and decoded exactly like one
+// written into the static items list.
+func TestResolveDynamicQuery_inlineManifest(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+  "items":[
+    {"source":"https://dyn.example/a","inlineManifest":{
+      "refVersion":"0.1.0","id":"ref-dyn","created":"2026-07-28T00:00:00Z","locale":"en",
+      "metadata":{"title":"Dyn","thumbnails":{"default":{"uri":"https://dyn.example/t.png"}}}}},
+    {"source":"https://dyn.example/b"}
+  ]
+}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	p := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://static.example/a"}},
+		DynamicQuery: &playlists.DynamicQuery{
+			Profile:  ProfileHTTPSJSONV1,
+			Endpoint: srv.URL,
+			ResponseMapping: playlists.ResponseMapping{
+				ItemsPath:  "items",
+				ItemSchema: "dp1/1.1",
+			},
+		},
+	}
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	im, err := out.Items[1].ParseInlineManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if im == nil || im.ID != "ref-dyn" || im.Metadata.Title != "Dyn" {
+		t.Fatalf("dynamic inlineManifest dropped: %+v", im)
+	}
+	if th := im.Metadata.Thumbnails["default"]; th.W != nil || th.H != nil {
+		t.Fatalf("absent thumbnail dimensions became %v/%v", th.W, th.H)
+	}
+	if out.Items[2].InlineManifest != nil {
+		t.Fatalf("item without inlineManifest got %+v", out.Items[2].InlineManifest)
+	}
+}
+
+func TestResolveDynamicQuery_malformedInlineManifestFailsValidation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "missing_locale", body: `{"items":[{"source":"https://dyn.example/a",
+			"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z"}}]}`},
+		{name: "zero_width_thumbnail", body: `{"items":[{"source":"https://dyn.example/a",
+			"inlineManifest":{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+			"metadata":{"thumbnails":{"default":{"uri":"https://dyn.example/t.png","w":0}}}}}]}`},
+		{name: "not_an_object", body: `{"items":[{"source":"https://dyn.example/a",
+			"inlineManifest":"https://dyn.example/manifest.json"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			p := &Playlist{
+				DPVersion: "1.1.0",
+				Title:     "t",
+				Items:     []PlaylistItem{{Source: "https://static.example/a"}},
+				DynamicQuery: &playlists.DynamicQuery{
+					Profile:  ProfileHTTPSJSONV1,
+					Endpoint: srv.URL,
+					ResponseMapping: playlists.ResponseMapping{
+						ItemsPath:  "items",
+						ItemSchema: "dp1/1.1",
+					},
+				},
+			}
+			_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
+			if !errors.Is(err, ErrDynamicQueryItemInvalid) {
+				t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
+			}
+			if !errors.Is(err, validate.ErrValidation) {
+				t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
+			}
+		})
 	}
 }

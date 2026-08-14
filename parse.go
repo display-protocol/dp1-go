@@ -22,6 +22,11 @@ var (
 )
 
 // ParseAndValidatePlaylist validates against the core playlist schema and decodes into playlist.Playlist.
+//
+// Only core fields are guaranteed schema-valid: the core schema describes no registry-extension
+// field, so an inlineManifest present in the document decodes without ever being checked, and
+// the merge package feeds its controls straight into display preferences. Callers that act on
+// it should parse with [ParseAndValidatePlaylistWithPlaylistsExtension] instead.
 func ParseAndValidatePlaylist(data []byte) (*playlist.Playlist, error) {
 	if err := PlaylistCoreSchemaValidate(data); err != nil {
 		return nil, CodeFromPlaylistValidation(err)

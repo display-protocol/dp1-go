@@ -435,6 +435,81 @@ func TestPlaylistItemWithPlaylistsExtension_OK_and_displayAt(t *testing.T) {
 	assertErrValidation(t, PlaylistItemWithPlaylistsExtension([]byte(`{"source":"https://example.com/a","displayAt":123}`)))
 }
 
+// inlineManifestJSON is the §3.6 example item manifest, envelope complete.
+const inlineManifestJSON = `{"refVersion":"0.1.0","id":"ref-9d26ecb3","created":"2026-07-28T00:00:00Z","locale":"en",
+	"metadata":{"title":"Pre-Process","artists":[{"name":"Casey Reas","id":""}],
+	"thumbnails":{"default":{"uri":"https://example.com/thumb.png","w":1200,"h":900}}}}`
+
+// §3.6 requires the unmodified ref-manifest schema to be applied to inlineManifest on both
+// composed paths. The single-item path is the one that silently ignored it before the spec's
+// PlaylistItemExtension refactor, so each case is asserted on both.
+func TestInlineManifest_bothComposedPaths(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		manifest string
+		wantErr  bool
+	}{
+		{"valid", inlineManifestJSON, false},
+		{"thumbnail_without_dimensions", `{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+			"metadata":{"thumbnails":{"default":{"uri":"https://example.com/t.png"}}}}`, false},
+		{"missing_locale", `{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z"}`, true},
+		{"bad_refVersion", `{"refVersion":"0.1","id":"r","created":"2026-07-28T00:00:00Z","locale":"en"}`, true},
+		{"zero_width_thumbnail", `{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+			"metadata":{"thumbnails":{"default":{"uri":"https://example.com/t.png","w":0,"h":900}}}}`, true},
+		{"not_an_object", `"https://example.com/manifest.json"`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			item := fmt.Sprintf(`{"source":"https://a","inlineManifest":%s}`, tc.manifest)
+			full := fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[%s],%s}`, item, playlistSigBlock)
+			for path, err := range map[string]error{
+				"item":     PlaylistItemWithPlaylistsExtension([]byte(item)),
+				"playlist": PlaylistWithPlaylistsExtension([]byte(full)),
+			} {
+				if tc.wantErr {
+					assertErrValidation(t, err)
+				} else if err != nil {
+					t.Fatalf("%s path: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+// Core DP-1 tolerates unknown fields: an inlineManifest (even a broken one) must not make a
+// document invalid on the core-only path, which knows nothing about the playlists extension.
+func TestInlineManifest_ignoredByCoreSchema(t *testing.T) {
+	t.Parallel()
+	item := `{"source":"https://a","inlineManifest":{"refVersion":"nope"}}`
+	if err := PlaylistItem([]byte(item)); err != nil {
+		t.Fatal(err)
+	}
+	doc := fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[%s],%s}`, item, playlistSigBlock)
+	if err := Playlist([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Thumbnail required was relaxed to ["uri"] (core changelog 2026-08-12).
+func TestRefManifest_thumbnailDimensionsOptional(t *testing.T) {
+	t.Parallel()
+	base := `{"refVersion":"0.1.0","id":"r","created":"2025-01-01T00:00:00Z","locale":"en",
+		"metadata":{"thumbnails":{"default":{"uri":"https://example.com/t.png"%s}}}}`
+	for _, extra := range []string{"", `,"w":320`, `,"h":180`, `,"w":320,"h":180`} {
+		if err := RefManifest([]byte(fmt.Sprintf(base, extra))); err != nil {
+			t.Fatalf("thumbnail%q: %v", extra, err)
+		}
+	}
+	// Still constrained when present.
+	assertErrValidation(t, RefManifest([]byte(fmt.Sprintf(base, `,"w":0`))))
+	assertErrValidation(t, RefManifest([]byte(fmt.Sprintf(base, `,"h":-1`))))
+	// uri itself remains required.
+	assertErrValidation(t, RefManifest([]byte(`{"refVersion":"0.1.0","id":"r","created":"2025-01-01T00:00:00Z","locale":"en",
+		"metadata":{"thumbnails":{"default":{"w":320,"h":180}}}}`)))
+}
+
 func assertErrValidation(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {

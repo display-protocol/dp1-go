@@ -1,7 +1,9 @@
 package playlist
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/display-protocol/dp1-go/extension/playlists"
@@ -185,5 +187,72 @@ func TestPlaylistItem_DisplayAt_NullAndEmpty(t *testing.T) {
 	}
 	if emptyItem.DisplayAt == nil || *emptyItem.DisplayAt != "" {
 		t.Fatalf("empty displayAt: got %#v, want pointer to empty string", emptyItem.DisplayAt)
+	}
+}
+
+// InlineManifest is the playlists-extension carriage of a full ref manifest (§3.6). Because it
+// is raw JSON the wire form survives a round trip byte for byte — including the artist "id": ""
+// of the §3.6 example, which a decoded manifest would drop through omitempty and thereby change
+// the JCS payload of a signed playlist.
+func TestPlaylistItem_InlineManifest_RoundTripIsByteFaithful(t *testing.T) {
+	t.Parallel()
+	manifest := `{"refVersion":"0.1.0","id":"ref-9d26ecb3","created":"2026-07-28T00:00:00Z","locale":"en",` +
+		`"metadata":{"title":"Pre-Process","artists":[{"name":"Casey Reas","id":""}],` +
+		`"thumbnails":{"default":{"uri":"https://example.com/thumb.png","w":1200,"h":900},` +
+		`"small":{"uri":"https://example.com/thumb-s.png"}}}}`
+	wire := []byte(`{"source":"https://example.com/work.html","inlineManifest":` + manifest + `}`)
+
+	var item PlaylistItem
+	if err := json.Unmarshal(wire, &item); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(&item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b, wire) {
+		t.Fatalf("round trip changed the bytes:\n want %s\n got  %s", wire, b)
+	}
+
+	m, err := item.ParseInlineManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m == nil || m.ID != "ref-9d26ecb3" {
+		t.Fatalf("inlineManifest: %+v", m)
+	}
+	th := m.Metadata.Thumbnails
+	if th["default"].W == nil || *th["default"].W != 1200 {
+		t.Fatalf("default thumbnail width: %+v", th["default"])
+	}
+	if th["small"].W != nil || th["small"].H != nil {
+		t.Fatalf("expected absent dimensions to stay absent: %+v", th["small"])
+	}
+
+	bare, err := json.Marshal(&PlaylistItem{Source: "https://example.com/work.html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bare), "inlineManifest") {
+		t.Fatalf("unset inlineManifest must be omitted: %s", bare)
+	}
+}
+
+// A core-parsed playlist can carry any JSON here, so decoding must fail loudly rather than
+// silently yielding a nil manifest that reads as "no manifest present".
+func TestPlaylistItem_ParseInlineManifest_absentAndInvalid(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"", "null"} {
+		item := PlaylistItem{Source: "https://a", InlineManifest: json.RawMessage(raw)}
+		m, err := item.ParseInlineManifest()
+		if err != nil || m != nil {
+			t.Fatalf("%q must read as absent, got %+v err=%v", raw, m, err)
+		}
+	}
+	for _, raw := range []string{`"https://m.example/x.json"`, `[]`, `{"metadata":{"thumbnails":{"default":{"w":"1200"}}}}`} {
+		item := PlaylistItem{Source: "https://a", InlineManifest: json.RawMessage(raw)}
+		if _, err := item.ParseInlineManifest(); err == nil {
+			t.Fatalf("%s must fail to decode", raw)
+		}
 	}
 }

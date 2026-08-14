@@ -51,7 +51,7 @@ Playlist with the optional **playlists** extension overlay:
 p, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(data)
 ```
 
-Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item with core `PlaylistItem` plus the playlists-extension overlay (`note` / `displayAt`), and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`, and `*playlist.DynamicQueryFetchOptions` or `nil` for HTTPS-only + SSRF-safe defaults). Set `AllowInsecureHTTP` on the options value to allow `http://` and local addresses (for example `httptest`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client, opts)` when you only need `[]PlaylistItem`. Use `errors.Is(err, playlist.ErrDynamicQueryEndpointPolicy)` when the outbound URL fails policy checks.
+Dynamic playlist items (playlists extension `dynamicQuery`): hydrate `{{placeholders}}` with `playlist.HydrationParams`, fetch the indexer, map response rows, validate each item with core `PlaylistItem` plus the playlists-extension overlay (`note` / `displayAt` / `inlineManifest`), and append after static items via `(*playlist.Playlist).ResolveDynamicQuery` (pass `*http.Client`, or `nil` for `http.DefaultClient`, and `*playlist.DynamicQueryFetchOptions` or `nil` for HTTPS-only + SSRF-safe defaults). Set `AllowInsecureHTTP` on the options value to allow `http://` and local addresses (for example `httptest`). The same fetch and decode path is available as `playlist.PlaylistItemsFromDynamicQuery(ctx, dq, params, client, opts)` when you only need `[]PlaylistItem`. Use `errors.Is(err, playlist.ErrDynamicQueryEndpointPolicy)` when the outbound URL fails policy checks.
 
 ### Errors
 
@@ -126,7 +126,7 @@ err = sign.VerifyMultiSignature(raw, sig)
 
 ### Display merge (`github.com/display-protocol/dp1-go/merge`)
 
-Resolution order: defaults → ref manifest controls → item `override` → item-local display fields.
+Resolution order: defaults → item `inlineManifest` controls → ref manifest controls → item `override` → item-local display fields.
 
 ```go
 import "github.com/display-protocol/dp1-go/merge"
@@ -134,15 +134,25 @@ import "github.com/display-protocol/dp1-go/merge"
 prefs, err := merge.DisplayForItem(def, refManifest, item)
 ```
 
+`item.InlineManifest` is applied automatically, so pass `nil` for `refManifest` when no manifest was fetched. `merge.ManifestForItem(refManifest, item)` returns the manifest a player should read for non-display fields (metadata, i18n): a fetched `ref` wins, the inline copy is the offline/degraded fallback. Both return an error if the item's inline manifest cannot be decoded — the normal case for playlists parsed on the core-only path, where nothing has checked the field. `DisplayForItem` returns it only when `refManifest` is nil: with an authoritative manifest in hand the inline fallback goes unread, so a malformed one does not block rendering.
+
+Known gap: interaction settings resolve by Go zero value rather than field presence, so a higher-precedence layer can switch an interaction on but not off, and a manifest's `mouse` block replaces the lower layer's wholesale ([#6](https://github.com/display-protocol/dp1-go/issues/6)).
+
 ### Extension types (optional)
 
-Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Item-level `displayAt` is a `*string` on `playlist.PlaylistItem` (validated with the playlists-extension overlay). Prefer `ParseAndValidate*` at the root package for full schema validation.
+Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Item-level `displayAt` is a `*string` on `playlist.PlaylistItem` (validated with the playlists-extension overlay). Item-level `inlineManifest` is a `json.RawMessage` on `playlist.PlaylistItem` (playlists extension §3.6): a complete ref manifest carried inside the playlist instead of behind `ref`, validated by the unmodified ref-manifest schema and already covered by the playlist signature (no `refHash` counterpart). Raw, like `override`, so the core-only parser stays tolerant of a document it does not implement and the signed bytes survive a round trip verbatim — decode with `item.ParseInlineManifest()`, or pass `item.InlineManifest` to `dp1.ParseAndValidateRefManifest` for decode plus schema validation. Prefer `ParseAndValidate*` at the root package for full schema validation.
+
+`refmanifest.Thumbnail.W` / `.H` are `*int`: the ref-manifest schema requires only `uri`, so dimensions may be absent and consumers must handle `nil`.
+
+## Breaking changes
+
+This module is `v0.x`; minor versions may break source compatibility. v0.6.0 changes `refmanifest.Thumbnail.W`/`.H` from `int` to `*int` so that an absent dimension is distinguishable from a zero one. [CHANGELOG.md](CHANGELOG.md) has the rationale and before/after.
 
 Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `ComputeActiveSet`, `NextDisplayAt`): resolve `displayAt` wire forms and compute eligible items when any item has `displayAt`. Per §3.5.6, the same rules apply whether items came from static `items` or `dynamicQuery`.
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with optional item-level `displayAt` / `note` overlays, and `playlist_with_extension.json` for full playlist + playlists-extension validation).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with the optional item-level overlay `$defs/PlaylistItemExtension` — `note`, `displayAt`, `inlineManifest` — and `playlist_with_extension.json` / `playlist_item_with_extension.json`, which both reference that single overlay so whole-playlist and single-item validation cannot drift).
 
 ## Testing
 

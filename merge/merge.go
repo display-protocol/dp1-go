@@ -1,5 +1,18 @@
 // Package merge applies DP-1 resolution order for display (and related) fields on an item:
-// defaults → ref manifest → item override (JSON) → item-local fields (last wins for the same path).
+// defaults → item inlineManifest → ref manifest → item override (JSON) → item-local fields
+// (last wins for the same path).
+//
+// The inlineManifest slot sits immediately below ref (playlists extension §3.6): a manifest
+// fetched via ref is authoritative and the inline copy is the offline/degraded fallback.
+//
+// This package is not a validation boundary: it overlays whatever manifests it is handed, so
+// values the schema would reject reach the result. item.InlineManifest is schema-checked only
+// when the playlist was parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
+//
+// Known gap (#6): interaction settings resolve by Go zero value rather than by field presence,
+// so a higher-precedence layer can only switch an interaction on, never off, and a manifest's
+// mouse block replaces the lower layer's wholesale instead of merging key by key. That predates
+// the inlineManifest slot but is easier to reach now that two manifests stack.
 package merge
 
 import (
@@ -10,15 +23,27 @@ import (
 )
 
 // DisplayForItem returns merged display preferences for an item.
-// ref may be nil if no manifest was fetched.
+// ref may be nil if no manifest was fetched; item.InlineManifest (if any) is applied
+// underneath it, so callers do not pass the inline manifest separately.
+//
+// The error is the inline manifest's decode error, and only when ref is nil: with an
+// authoritative manifest in hand the inline fallback goes unread, so a malformed one cannot
+// block rendering.
 func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item playlist.PlaylistItem) (*playlist.DisplayPrefs, error) {
 	var base playlist.DisplayPrefs
 	if def != nil && def.Display != nil {
 		base = *cloneDisplay(def.Display)
 	}
-	if ref != nil && ref.Controls != nil && ref.Controls.Display != nil {
-		applyDisplayJSON(&base, ref.Controls.Display)
+	// An undecodable inline manifest is fatal only when nothing can stand in for it. §3.6 makes
+	// a fetched ref authoritative and the inline copy the fallback, so when ref is present the
+	// fallback is simply not used — refusing to render because the copy nobody would have read
+	// is malformed would be the wrong call.
+	inline, err := item.ParseInlineManifest()
+	if err != nil && ref == nil {
+		return nil, err
 	}
+	applyManifestDisplay(&base, inline)
+	applyManifestDisplay(&base, ref)
 	if len(item.Override) > 0 {
 		var ov struct {
 			Duration *float64               `json:"duration,omitempty"`
@@ -38,6 +63,34 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 		return nil, nil
 	}
 	return &base, nil
+}
+
+// ManifestForItem returns the ref manifest a player should read for an item, applying the
+// §3.6 precedence: a manifest fetched via ref wins over the item's inlineManifest, which in
+// turn serves offline or degraded-fetch paths. Pass a nil ref when no fetch was made (or it
+// failed) to fall back to the inline copy. Returns nil when neither is present.
+//
+// This resolves the whole document, not per-field: the two manifests are alternative carriages
+// of one document (§3.6), so they are not merged key by key. Display controls are the exception
+// and are layered by [DisplayForItem].
+//
+// The error is the inline manifest's decode error, reached only when ref is nil, since a
+// non-nil ref is returned without reading the inline copy. It is the normal outcome on the
+// core-only parse path, where nothing has checked the field.
+func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) (*refmanifest.Manifest, error) {
+	if ref != nil {
+		return ref, nil
+	}
+	return item.ParseInlineManifest()
+}
+
+// applyManifestDisplay overlays one manifest's display controls, tolerating a nil manifest or
+// a manifest without controls so callers can chain inline and fetched manifests in order.
+func applyManifestDisplay(dst *playlist.DisplayPrefs, m *refmanifest.Manifest) {
+	if m == nil || m.Controls == nil || m.Controls.Display == nil {
+		return
+	}
+	applyDisplayJSON(dst, m.Controls.Display)
 }
 
 func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
