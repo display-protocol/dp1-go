@@ -21,6 +21,10 @@ import (
 // ref may be nil if no manifest was fetched; item.InlineManifest (if any) is applied
 // underneath it, so callers do not pass the inline manifest separately.
 //
+// The error is the inline manifest's decode error, and only when ref is nil: with an
+// authoritative manifest in hand the inline fallback goes unread, so a malformed one cannot
+// block rendering.
+//
 // Note this resolves per key while [ManifestForItem] resolves per document: a key the fetched
 // ref manifest leaves unset still comes from the inline copy here, even though ManifestForItem
 // would have discarded that copy wholesale. That follows the spec — ref-manifest §7 is
@@ -31,8 +35,12 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 	if def != nil && def.Display != nil {
 		base = *cloneDisplay(def.Display)
 	}
+	// An undecodable inline manifest is fatal only when nothing can stand in for it. §3.6 makes
+	// a fetched ref authoritative and the inline copy the fallback, so when ref is present the
+	// fallback is simply not used — refusing to render because the copy nobody would have read
+	// is malformed would be the wrong call.
 	inline, err := item.ParseInlineManifest()
-	if err != nil {
+	if err != nil && ref == nil {
 		return nil, err
 	}
 	applyManifestDisplay(&base, inline)
@@ -67,10 +75,10 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 // of one document (§3.6), so they are not merged key by key. Display controls are the exception
 // and are layered by [DisplayForItem].
 //
-// The error is the inline manifest's decode error. Schema validation makes it unlikely but not
-// impossible: JSON Schema "integer" accepts any number with a zero fraction, so a thumbnail
-// "w": 1e2 or 100.0 — what a float-typed producer emits — validates and then fails to decode
-// into int. Handle the error rather than assuming a validated playlist cannot produce one.
+// The error is the inline manifest's decode error, reached only when ref is nil, since a
+// non-nil ref is returned without reading the inline copy. It is the normal outcome on the
+// core-only parse path, where nothing has checked the field; after extension validation the
+// decoder accepts everything the schema does, so it should not occur.
 func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) (*refmanifest.Manifest, error) {
 	if ref != nil {
 		return ref, nil

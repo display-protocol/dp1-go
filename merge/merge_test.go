@@ -657,17 +657,28 @@ func TestDisplayForItem_emptyKeyboardEncodesAsArray(t *testing.T) {
 	}
 }
 
-// DisplayForItem must surface the inline manifest's decode error, not silently drop the layer.
-// Without this, swallowing the error passes CI, and a caller on the core-only path — where
-// README tells them to handle it — gets prefs quietly missing the inline layer instead.
+// A malformed inline manifest is fatal only when nothing can replace it. With no ref fetched
+// there is no fallback, so the error must surface — swallowing it would hand a caller on the
+// core-only path prefs quietly missing the inline layer. With a ref in hand §3.6 makes the
+// fetched manifest authoritative and the inline copy goes unread, so it must not block
+// rendering a conforming playlist.
 func TestDisplayForItem_badInlineManifest(t *testing.T) {
 	t.Parallel()
 	item := playlist.PlaylistItem{
 		Source:         "https://x",
 		InlineManifest: json.RawMessage(`"https://m.example/x.json"`),
 	}
+
 	out, err := DisplayForItem(nil, nil, item)
 	if err == nil || out != nil {
-		t.Fatalf("expected decode error, got %+v err=%v", out, err)
+		t.Fatalf("no ref: expected decode error, got %+v err=%v", out, err)
+	}
+
+	out, err = DisplayForItem(nil, manifestWithScaling("remote", "fill"), item)
+	if err != nil {
+		t.Fatalf("an unread inline fallback must not block the authoritative ref: %v", err)
+	}
+	if out == nil || out.Scaling != "fill" {
+		t.Fatalf("expected the ref manifest to be applied, got %+v", out)
 	}
 }

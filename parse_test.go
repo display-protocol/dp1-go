@@ -619,12 +619,13 @@ func TestInlineManifest_survivesStructRoundTripForSigning(t *testing.T) {
 	}
 }
 
-// Schema validation narrows the inline manifest but does not guarantee it decodes: JSON Schema
-// "integer" accepts any number with a zero fraction, while Go's int does not. Locked so the
-// doc on merge.ManifestForItem stays honest about the error being reachable.
-func TestInlineManifest_schemaValidButUndecodableNumber(t *testing.T) {
+// JSON Schema "integer" is a mathematical property, not a syntax, so 100, 1e2 and 100.0 are all
+// valid widths. Whatever the schema accepts must also decode, or a conforming playlist becomes
+// unrenderable — the reason Thumbnail has a custom decoder.
+func TestInlineManifest_everyIntegerSpellingDecodes(t *testing.T) {
 	t.Parallel()
-	for _, w := range []string{"1e2", "100.0"} {
+	cases := map[string]int{"100": 100, "1e2": 100, "100.0": 100, "1.2e3": 1200}
+	for w, want := range cases {
 		t.Run(w, func(t *testing.T) {
 			t.Parallel()
 			doc := []byte(`{"dpVersion":"1.1.0","title":"Inline","items":[{"source":"https://a",
@@ -635,8 +636,36 @@ func TestInlineManifest_schemaValidButUndecodableNumber(t *testing.T) {
 			if err != nil {
 				t.Fatalf("schema must accept %s as an integer: %v", w, err)
 			}
-			if _, err := p.Items[0].ParseInlineManifest(); err == nil {
-				t.Fatalf("expected %s to fail decoding into int", w)
+			m, err := p.Items[0].ParseInlineManifest()
+			if err != nil {
+				t.Fatalf("schema accepted %s but decoding rejected it: %v", w, err)
+			}
+			got := m.Metadata.Thumbnails["default"].W
+			if got == nil || *got != want {
+				t.Fatalf("w = %v, want %d", got, want)
+			}
+		})
+	}
+}
+
+// The tolerant decoder must not become laxer than the schema it mirrors.
+func TestRefManifest_thumbnailDimensionRejections(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"string":         `"1200"`,
+		"fractional":     `100.5`,
+		"bool":           `true`,
+		"object":         `{}`,
+		"out_of_range":   `1e30`,
+		"negative_float": `-100.0`, // decodes, but the schema's minimum still rejects it
+	}
+	for name, w := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en",
+				"metadata":{"thumbnails":{"default":{"uri":"https://m.example/t.png","w":` + w + `}}}}`)
+			if _, err := dp1.ParseAndValidateRefManifest(doc); err == nil {
+				t.Fatalf("w=%s must be rejected", w)
 			}
 		})
 	}

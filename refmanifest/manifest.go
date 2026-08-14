@@ -1,7 +1,11 @@
 // Package refmanifest defines the optional ref manifest envelope (metadata + controls).
 package refmanifest
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+)
 
 // Manifest is the ref manifest root (DP-1 ref-manifest schema).
 type Manifest struct {
@@ -43,6 +47,80 @@ type Thumbnail struct {
 	W      *int   `json:"w,omitempty"`
 	H      *int   `json:"h,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
+}
+
+// UnmarshalJSON decodes a thumbnail, accepting every JSON spelling of an integer that the
+// schema does.
+//
+// JSON Schema "integer" means a mathematical integer, not a syntax: 100, 1e2 and 100.0 are all
+// valid widths, and a producer whose numbers are floats emits the latter forms routinely.
+// encoding/json refuses to put any of them but the first into an int, which would leave a
+// schema-valid manifest — and, since these can arrive inline, a whole conforming playlist —
+// undecodable. Validation and decoding have to accept the same numeric language.
+//
+// The equivalent gap remains on the SDK's other numeric fields; only the thumbnail dimensions
+// are in scope here, and they are the fields the relaxation of `required` newly exposes.
+func (t *Thumbnail) UnmarshalJSON(data []byte) error {
+	// The alias sheds this method, so the embedded value decodes with the default rules while
+	// the shadowing w/h fields at depth 0 capture the raw numbers for the tolerant path.
+	type alias Thumbnail
+	var raw struct {
+		alias
+		W json.RawMessage `json:"w"`
+		H json.RawMessage `json:"h"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	w, err := parseDimension(raw.W)
+	if err != nil {
+		return fmt.Errorf("thumbnail w: %w", err)
+	}
+	h, err := parseDimension(raw.H)
+	if err != nil {
+		return fmt.Errorf("thumbnail h: %w", err)
+	}
+	*t = Thumbnail(raw.alias)
+	t.W, t.H = w, h
+	return nil
+}
+
+// parseDimension reads one optional pixel dimension. Absent and null both mean unknown.
+// A number that is not a mathematical integer is rejected, as is one outside int — the schema
+// bounds dimensions only from below (minimum 1), so an oversized value is representable in
+// JSON but not in Go, and silently truncating it would invent a size.
+func parseDimension(raw json.RawMessage) (*int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	// json.Number accepts a quoted string too; the schema does not, and being laxer than the
+	// document it validates against is how a producer's bug reaches a player unnoticed.
+	if raw[0] == '"' {
+		return nil, fmt.Errorf("%s is a string, want a number", raw)
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return nil, err
+	}
+	if i, err := n.Int64(); err == nil {
+		if i < math.MinInt || i > math.MaxInt {
+			return nil, fmt.Errorf("%s out of range for int", n)
+		}
+		v := int(i)
+		return &v, nil
+	}
+	f, err := n.Float64()
+	if err != nil {
+		return nil, err
+	}
+	if math.IsInf(f, 0) || math.IsNaN(f) || f != math.Trunc(f) {
+		return nil, fmt.Errorf("%s is not an integer", n)
+	}
+	if f < math.MinInt || f > math.MaxInt {
+		return nil, fmt.Errorf("%s out of range for int", n)
+	}
+	v := int(f)
+	return &v, nil
 }
 
 // Controls groups display and safety preferences from the manifest.

@@ -80,3 +80,11 @@ accessors to read that state.
   manifest setting only `mouse.scroll` no longer erases a `mouse.click` an inline manifest set.
 - `merge.DisplayForItem` no longer returns display preferences that share pointers with the
   playlist defaults. Writing through the result used to corrupt the baseline for every later item.
+- `refmanifest.Thumbnail` decodes every JSON spelling of an integer the schema accepts. JSON
+  Schema `integer` is a mathematical property, not a syntax, so `1e2` and `100.0` are valid
+  widths; `encoding/json` refuses all but `100`, which left schema-valid manifests — and whole
+  conforming playlists carrying one inline — undecodable. Strings, fractions and values outside
+  `int` are still rejected, so the decoder is never laxer than the schema.
+- `merge.DisplayForItem` no longer fails on a malformed inline manifest when a fetched `ref` is
+  present. §3.6 makes the fetched manifest authoritative and the inline copy the fallback, so a
+  fallback nobody reads must not prevent rendering.
