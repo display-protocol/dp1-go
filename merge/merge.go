@@ -93,8 +93,23 @@ func applyManifestDisplay(dst *playlist.DisplayPrefs, m *refmanifest.Manifest) {
 	applyDisplayJSON(dst, m.Controls.Display)
 }
 
+// cloneDisplay copies the defaults into the merge base. It must be deep: the result is handed
+// to the caller, and every pointer or slice left shared with the playlist defaults is one a
+// player can write through to corrupt the baseline for every later item. The overlays
+// themselves always allocate, so this is the only place that sharing could originate.
 func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	c := *d
+	if d.Autoplay != nil {
+		v := *d.Autoplay
+		c.Autoplay = &v
+	}
+	if d.Loop != nil {
+		v := *d.Loop
+		c.Loop = &v
+	}
+	if d.Margin != nil {
+		c.Margin = append(json.RawMessage(nil), d.Margin...)
+	}
 	if d.Interaction != nil {
 		ip := *d.Interaction
 		if d.Interaction.Mouse != nil {

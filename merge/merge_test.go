@@ -425,3 +425,46 @@ func TestDisplayForItem_badInlineManifest(t *testing.T) {
 		t.Fatalf("expected the ref manifest to be applied, got %+v", out)
 	}
 }
+
+// The merged prefs are handed to the caller, so no pointer may lead back into the playlist
+// defaults. Assert pointer identity rather than values: a value comparison holds whether or not
+// the copy happened, so it cannot catch the regression.
+func TestDisplayForItem_resultNeverSharesPointersWithDefaults(t *testing.T) {
+	t.Parallel()
+	tru := true
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{
+		Autoplay:    &tru,
+		Loop:        &tru,
+		Margin:      json.RawMessage(`"5%"`),
+		Interaction: &playlist.InteractionPrefs{Keyboard: []string{"KeyA"}},
+	}}
+	item := playlist.PlaylistItem{Source: "https://x"}
+
+	out, err := DisplayForItem(def, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := def.Display
+	if out.Autoplay == d.Autoplay {
+		t.Error("Autoplay pointer shared with the playlist defaults")
+	}
+	if out.Loop == d.Loop {
+		t.Error("Loop pointer shared with the playlist defaults")
+	}
+	if len(out.Margin) > 0 && &out.Margin[0] == &d.Margin[0] {
+		t.Error("Margin backing array shared with the playlist defaults")
+	}
+	if out.Interaction == d.Interaction {
+		t.Error("Interaction pointer shared with the playlist defaults")
+	}
+
+	// End to end: two items resolved from one Defaults must not see each other's edits.
+	*out.Autoplay = false
+	second, err := DisplayForItem(def, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Autoplay == nil || !*second.Autoplay {
+		t.Fatal("writing through one item's prefs changed the defaults for the next")
+	}
+}
