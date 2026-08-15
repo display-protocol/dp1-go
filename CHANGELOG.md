@@ -3,7 +3,7 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased — v0.6.0
+## v0.6.0 — 2026-08-14
 
 Aligns the SDK with two DP-1 spec changes: inline carriage of a Ref Manifest on a playlist item
 (Playlist Extension §3.6) and the relaxation of the ref-manifest `Thumbnail` requirements.
