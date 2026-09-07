@@ -24,6 +24,28 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 
 type errReadCloser struct{}
 
+func TestDynamicQueryContentRatingValidation(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":"general","contentReasons":["curator advisory"]}]}`), dq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ContentRating == nil || string(*items[0].ContentRating) != "general" {
+		t.Fatalf("items: %+v", items)
+	}
+	_, err = playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":null}]}`), dq)
+	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
+		t.Fatalf("expected invalid item, got %v", err)
+	}
+}
+
 func (errReadCloser) Read(p []byte) (int, error) { return 0, errors.New("read body") }
 func (errReadCloser) Close() error               { return nil }
 

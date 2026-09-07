@@ -9,6 +9,7 @@ import (
 
 	"github.com/display-protocol/dp1-go"
 	"github.com/display-protocol/dp1-go/extension/channels"
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/playlist"
@@ -145,6 +146,70 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	}
 	if len(out.Items) != 1 || out.Items[0].Note == nil || out.Items[0].Note.Text != "Track intro" {
 		t.Fatalf("item: %+v", out.Items)
+	}
+}
+
+func TestParseAndValidatePlaylistWithContentRatingExtension(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	rating := contentrating.RatingMature
+	reasons := []string{"nudity"}
+	pl := playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "Rated",
+		Items: []playlist.PlaylistItem{{
+			Source:         "https://a",
+			ContentRating:  &rating,
+			ContentReasons: &reasons,
+		}},
+	}
+	body, _ := json.Marshal(pl)
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2025-06-01T12:00:00Z")
+	pl.Signatures = []playlist.Signature{sig}
+	signed, _ := json.Marshal(pl)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Items[0].ContentRating == nil || *out.Items[0].ContentRating != contentrating.RatingMature {
+		t.Fatalf("rating: %+v", out.Items[0].ContentRating)
+	}
+	if err := sign.VerifyMultiSignature(signed, out.Signatures[0]); err != nil {
+		t.Fatal(err)
+	}
+	tampered := []byte(strings.Replace(string(signed), `"contentRating":"mature"`, `"contentRating":"general"`, 1))
+	if err := sign.VerifyMultiSignature(tampered, out.Signatures[0]); err == nil {
+		t.Fatalf("rating change must invalidate signature: %v", err)
+	}
+	malformed := []byte(strings.Replace(string(signed), `"contentRating":"mature"`, `"contentRating":null`, 1))
+	if _, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension(malformed); err == nil {
+		t.Fatal("expected present null contentRating to fail")
+	}
+}
+
+func TestContentReasonsPresenceRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"absent", `{"source":"https://a"}`, `{"source":"https://a"}`},
+		{"present_empty", `{"source":"https://a","contentReasons":[]}`, `{"source":"https://a","contentReasons":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var item playlist.PlaylistItem
+			if err := json.Unmarshal([]byte(tc.raw), &item); err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 

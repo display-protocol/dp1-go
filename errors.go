@@ -38,6 +38,9 @@ const (
 	CodeLicenseDenied     ErrorCode = "licenseDenied"
 	CodeReproMismatch     ErrorCode = "reproMismatch"
 	CodeSourceUnreachable ErrorCode = "sourceUnreachable"
+	// CodeContentBlocked reports that a structurally valid item was excluded by consumer policy.
+	// Invalid content-rating metadata remains CodePlaylistInvalid.
+	CodeContentBlocked ErrorCode = "contentBlocked"
 )
 
 // CodedError wraps an error with ErrorCode for UI or telemetry.

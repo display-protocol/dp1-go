@@ -349,6 +349,40 @@ func TestPlaylistWithPlaylistsExtension_displayAtValidationFailures(t *testing.T
 	}
 }
 
+func TestContentRatingExtension(t *testing.T) {
+	t.Parallel()
+	valid := []string{
+		`{"source":"https://example.com/a"}`,
+		`{"source":"https://example.com/a","contentRating":"general"}`,
+		`{"source":"https://example.com/a","contentRating":"mature","contentReasons":[]}`,
+		`{"source":"https://example.com/a","contentReasons":["nudity","flashing imagery"]}`,
+	}
+	for _, item := range valid {
+		if err := PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)); err != nil {
+			t.Fatalf("valid item %s: %v", item, err)
+		}
+	}
+	invalid := []string{
+		`{"source":"https://example.com/a","contentRating":null}`,
+		`{"source":"https://example.com/a","contentRating":"unrated"}`,
+		`{"source":"https://example.com/a","contentRating":1}`,
+		`{"source":"https://example.com/a","contentReasons":null}`,
+		`{"source":"https://example.com/a","contentReasons":[""]}`,
+		`{"source":"https://example.com/a","contentReasons":"nudity"}`,
+	}
+	for _, item := range invalid {
+		assertErrValidation(t, PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)))
+	}
+
+	doc := fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":"general"}],%s}`, playlistSigBlock)
+	if err := PlaylistWithContentRatingExtension([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistWithPlaylistsAndContentRatingExtensions([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidators_minimalValid(t *testing.T) {
 	t.Parallel()
 	playlistCore := []byte(`{

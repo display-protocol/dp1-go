@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/refmanifest"
@@ -79,6 +80,13 @@ type PlaylistItem struct {
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
 	InlineManifest json.RawMessage `json:"inlineManifest,omitempty"`
+
+	// ContentRating and ContentReasons are draft content-rating extension fields.
+	// Nil ContentRating means the field was absent (unrated). Parse with a content-rating-aware
+	// helper before acting on either field; present null and malformed values must be rejected.
+	ContentRating *contentrating.Rating `json:"contentRating,omitempty"`
+	// Pointer-to-slice preserves absent versus a present empty array across decode/marshal.
+	ContentReasons *[]string `json:"contentReasons,omitempty"`
 }
 
 // ParseInlineManifest decodes the item's inline Ref Manifest (§3.6).

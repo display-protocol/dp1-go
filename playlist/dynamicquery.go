@@ -96,7 +96,7 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // according to dq (the playlists extension dynamicQuery). It replaces {{name}} placeholders
 // in dq.Query with params, issues one HTTP request to dq.Endpoint, walks dq.ResponseMapping
 // (itemsPath, itemMap) to obtain objects, validates each with
-// [validate.PlaylistItemWithPlaylistsExtension] (core PlaylistItem + note/displayAt/inlineManifest overlay),
+// [validate.PlaylistItemWithPlaylistsAndContentRatingExtensions] (core item plus playlists and content-rating overlays),
 // and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this when
 // p.DynamicQuery is non-nil.
 //
@@ -172,7 +172,7 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 		if err != nil {
 			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
 		}
-		if err := validate.PlaylistItemWithPlaylistsExtension(itemJSON); err != nil {
+		if err := validate.PlaylistItemWithPlaylistsAndContentRatingExtensions(itemJSON); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
 		}
 		var it PlaylistItem
@@ -534,6 +534,14 @@ func clonePlaylist(p *Playlist) *Playlist {
 		if c.Items[i].DisplayAt != nil {
 			s := *c.Items[i].DisplayAt
 			c.Items[i].DisplayAt = &s
+		}
+		if c.Items[i].ContentRating != nil {
+			r := *c.Items[i].ContentRating
+			c.Items[i].ContentRating = &r
+		}
+		if c.Items[i].ContentReasons != nil {
+			reasons := append([]string(nil), (*c.Items[i].ContentReasons)...)
+			c.Items[i].ContentReasons = &reasons
 		}
 	}
 	return &c

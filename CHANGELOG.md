@@ -3,6 +3,16 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased
+
+- Add draft content-rating extension types, embedded schemas, and parse helpers. `contentRating`
+  is an optional `general` / `mature` per-item label; absence is unrated. Optional
+  `contentReasons` are nonempty open-vocabulary strings.
+- Dynamic-query items now use the combined playlists + content-rating validator, rejecting
+  malformed present ratings and reasons while preserving unrated items.
+- Reserve `contentBlocked` for valid items excluded by consumer policy. Invalid metadata remains
+  `playlistInvalid`. Existing JCS/signature behavior is unchanged; extension fields are signed.
+
 ## v0.6.1 — 2026-09-14
 
 Aligns the SDK with the artist profile added to the Ref Manifest in

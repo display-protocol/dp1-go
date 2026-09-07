@@ -140,6 +140,8 @@ Known gap: interaction settings resolve by Go zero value rather than field prese
 
 ### Extension types (optional)
 
+The draft content-rating extension uses `playlist.PlaylistItem.ContentRating` (`*contentrating.Rating`) and `ContentReasons` (`*[]string`). Nil rating means absent/unrated; the reasons pointer preserves absent versus a present empty array through decode/marshal. Use `ParseAndValidatePlaylistWithContentRatingExtension` for core playlists or `ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions` when the playlists extension is also present; these reject present `null`, unknown ratings, and malformed reasons. Dynamic-query item resolution uses the combined item validator. Valid policy exclusions may use `dp1.CodeContentBlocked`; malformed metadata remains `dp1.CodePlaylistInvalid`.
+
 Shared and extension-specific structs live under `extension/` (for example `extension/playlists` for the playlists overlay—`DynamicQuery`, experimental `Note` on `playlist.Playlist` and `playlist.PlaylistItem`; `extension/identity` for `Entity`; `extension/channels` for the channel document type). Item-level `displayAt` is a `*string` on `playlist.PlaylistItem` (validated with the playlists-extension overlay). Item-level `inlineManifest` is a `json.RawMessage` on `playlist.PlaylistItem` (playlists extension §3.6): a complete ref manifest carried inside the playlist instead of behind `ref`, validated by the unmodified ref-manifest schema and already covered by the playlist signature (no `refHash` counterpart). Raw, like `override`, so the core-only parser stays tolerant of a document it does not implement and the signed bytes survive a round trip verbatim — decode with `item.ParseInlineManifest()`, or pass `item.InlineManifest` to `dp1.ParseAndValidateRefManifest` for decode plus schema validation. Prefer `ParseAndValidate*` at the root package for full schema validation.
 
 `refmanifest.Thumbnail.W` / `.H` are `*int`: the ref-manifest schema requires only `uri`, so dimensions may be absent and consumers must handle `nil`.
@@ -152,7 +154,7 @@ Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `Co
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with the optional item-level overlay `$defs/PlaylistItemExtension` — `note`, `displayAt`, `inlineManifest` — and `playlist_with_extension.json` / `playlist_item_with_extension.json`, which both reference that single overlay so whole-playlist and single-item validation cannot drift).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 plus the registry extensions, including the playlists and content-rating composed validators).
 
 ## Testing
 
