@@ -213,6 +213,22 @@ func TestContentReasonsPresenceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestValidateContentRatingExtensionFragment(t *testing.T) {
+	t.Parallel()
+	if err := dp1.ValidateContentRatingExtension([]byte(`{"items":[{"contentRating":"general","contentReasons":[]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		`{"items":[{"contentRating":null}]}`,
+		`{"items":[{"contentRating":"unknown"}]}`,
+		`{"items":[{"contentReasons":[""]}]}`,
+	} {
+		if err := dp1.ValidateContentRatingExtension([]byte(raw)); err == nil {
+			t.Fatalf("expected invalid fragment: %s", raw)
+		}
+	}
+}
+
 // --- ParseAndValidate: playlist-group, ref manifest, channel ---
 
 func TestParseAndValidatePlaylistGroup(t *testing.T) {

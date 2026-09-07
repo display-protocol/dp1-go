@@ -23,6 +23,16 @@ var (
 	ChannelExtensionSchemaValidate                                = validate.ChannelsExtension
 )
 
+// ValidateContentRatingExtension validates only the draft content-rating overlay.
+// It accepts a partial/full playlist without requiring core fields or signatures, making it
+// suitable for legacy ingestion boundaries that cannot yet require a signed DP-1 document.
+func ValidateContentRatingExtension(data []byte) error {
+	if err := validate.ContentRatingExtensionFragment(data); err != nil {
+		return CodeFromPlaylistValidation(err)
+	}
+	return nil
+}
+
 // ParseAndValidatePlaylist validates against the core playlist schema and decodes into playlist.Playlist.
 //
 // Only core fields are guaranteed schema-valid: the core schema describes no registry-extension
