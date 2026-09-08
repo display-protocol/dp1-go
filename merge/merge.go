@@ -8,11 +8,6 @@
 // This package is not a validation boundary: it overlays whatever manifests it is handed, so
 // values the schema would reject reach the result. item.InlineManifest is schema-checked only
 // when the playlist was parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
-//
-// Known gap (#6): interaction settings resolve by Go zero value rather than by field presence,
-// so a higher-precedence layer can only switch an interaction on, never off, and a manifest's
-// mouse block replaces the lower layer's wholesale instead of merging key by key. That predates
-// the inlineManifest slot but is easier to reach now that two manifests stack.
 package merge
 
 import (
@@ -29,6 +24,12 @@ import (
 // The error is the inline manifest's decode error, and only when ref is nil: with an
 // authoritative manifest in hand the inline fallback goes unread, so a malformed one cannot
 // block rendering.
+//
+// Note this resolves per key while [ManifestForItem] resolves per document: a key the fetched
+// ref manifest leaves unset still comes from the inline copy here, even though ManifestForItem
+// would have discarded that copy wholesale. That follows the spec — ref-manifest §7 is
+// explicitly last-write-wins within the same key path — but the two functions can disagree
+// about where a given value came from.
 func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item playlist.PlaylistItem) (*playlist.DisplayPrefs, error) {
 	var base playlist.DisplayPrefs
 	if def != nil && def.Display != nil {
@@ -76,7 +77,8 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 //
 // The error is the inline manifest's decode error, reached only when ref is nil, since a
 // non-nil ref is returned without reading the inline copy. It is the normal outcome on the
-// core-only parse path, where nothing has checked the field.
+// core-only parse path, where nothing has checked the field; after extension validation the
+// decoder accepts everything the schema does, so it should not occur.
 func ManifestForItem(ref *refmanifest.Manifest, item playlist.PlaylistItem) (*refmanifest.Manifest, error) {
 	if ref != nil {
 		return ref, nil
@@ -93,12 +95,21 @@ func applyManifestDisplay(dst *playlist.DisplayPrefs, m *refmanifest.Manifest) {
 	applyDisplayJSON(dst, m.Controls.Display)
 }
 
+// cloneDisplay copies the defaults into the merge base. The interaction block is rebuilt field
+// by field because its values are now pointers: copying the struct would alias the caller's,
+// letting a later overlay write back into the playlist defaults. Autoplay, Loop and Margin are
+// still shared with the defaults — see #7.
 func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	c := *d
 	if d.Interaction != nil {
 		ip := *d.Interaction
+		ip.Keyboard = copyKeyboard(d.Interaction.Keyboard)
 		if d.Interaction.Mouse != nil {
-			mp := *d.Interaction.Mouse
+			mp := playlist.MousePrefs{}
+			overlayBool(&mp.Click, d.Interaction.Mouse.Click)
+			overlayBool(&mp.Scroll, d.Interaction.Mouse.Scroll)
+			overlayBool(&mp.Drag, d.Interaction.Mouse.Drag)
+			overlayBool(&mp.Hover, d.Interaction.Mouse.Hover)
 			ip.Mouse = &mp
 		}
 		c.Interaction = &ip
@@ -111,6 +122,31 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 		c.UserOverrides = m
 	}
 	return &c
+}
+
+// copyKeyboard duplicates an optional keyboard list, preserving the absent/empty distinction
+// on both sides of a round trip. It must allocate even for an empty list: append on a nil
+// slice returns nil, and a non-nil *[]string holding a nil slice marshals as "keyboard": null,
+// which the schema rejects (the field is an array) and which decodes back to a nil pointer —
+// erasing the very revocation the pointer type exists to carry.
+func copyKeyboard(src *[]string) *[]string {
+	if src == nil {
+		return nil
+	}
+	kb := make([]string, len(*src))
+	copy(kb, *src)
+	return &kb
+}
+
+// overlayBool writes src over dst only when src carries a value, copying it so layers never
+// alias one another's pointers. A nil src leaves the lower layer's decision in place — the
+// distinction that lets an item turn an interaction off rather than only on.
+func overlayBool(dst **bool, src *bool) {
+	if src == nil {
+		return
+	}
+	v := *src
+	*dst = &v
 }
 
 func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
@@ -135,8 +171,10 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 		if dst.Interaction == nil {
 			dst.Interaction = &playlist.InteractionPrefs{}
 		}
-		if len(src.Interaction.Keyboard) > 0 {
-			dst.Interaction.Keyboard = append([]string(nil), src.Interaction.Keyboard...)
+		// Presence, not emptiness: an explicit "keyboard": [] revokes the keys a lower layer
+		// allowed, so only a nil slice means "said nothing".
+		if src.Interaction.Keyboard != nil {
+			dst.Interaction.Keyboard = copyKeyboard(src.Interaction.Keyboard)
 		}
 		if src.Interaction.Mouse != nil {
 			if dst.Interaction.Mouse == nil {
@@ -144,18 +182,10 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 			}
 			m := dst.Interaction.Mouse
 			sm := src.Interaction.Mouse
-			if sm.Click {
-				m.Click = sm.Click
-			}
-			if sm.Scroll {
-				m.Scroll = sm.Scroll
-			}
-			if sm.Drag {
-				m.Drag = sm.Drag
-			}
-			if sm.Hover {
-				m.Hover = sm.Hover
-			}
+			overlayBool(&m.Click, sm.Click)
+			overlayBool(&m.Scroll, sm.Scroll)
+			overlayBool(&m.Drag, sm.Drag)
+			overlayBool(&m.Hover, sm.Hover)
 		}
 	}
 	if len(src.UserOverrides) > 0 {
@@ -186,19 +216,54 @@ func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayContro
 		v := *src.Loop
 		dst.Loop = &v
 	}
-	if len(src.Interaction) > 0 {
-		if dst.Interaction == nil {
-			dst.Interaction = &playlist.InteractionPrefs{}
+	applyInteractionJSON(dst, src.Interaction)
+}
+
+// applyInteractionJSON overlays one manifest's interaction block by JSON field presence, not by
+// Go zero values. Two manifests now stack (inline then ref, §3.6), so assigning a decoded block
+// wholesale would let a ref manifest setting only mouse.scroll erase a mouse.click the inline
+// copy set — clobbering a key the higher-precedence document never mentioned, which
+// ref-manifest §7 ("last-write-wins within the same key path") does not license.
+//
+// Presence is what the pointers below record: nil means the key was absent and the lower layer
+// stands; non-nil means it was written and wins, including "keyboard": [] and "click": false,
+// which a length or truthiness check would silently drop.
+func applyInteractionJSON(dst *playlist.DisplayPrefs, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var src struct {
+		Keyboard *[]string `json:"keyboard"`
+		Mouse    *struct {
+			Click  *bool `json:"click"`
+			Scroll *bool `json:"scroll"`
+			Drag   *bool `json:"drag"`
+			Hover  *bool `json:"hover"`
+		} `json:"mouse"`
+	}
+	// A manifest that reached here was schema-checked by the caller's parser; a decode failure
+	// means the interaction block is unusable, and dropping it leaves lower layers intact.
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return
+	}
+	if src.Keyboard == nil && src.Mouse == nil {
+		return
+	}
+	if dst.Interaction == nil {
+		dst.Interaction = &playlist.InteractionPrefs{}
+	}
+	if src.Keyboard != nil {
+		dst.Interaction.Keyboard = copyKeyboard(src.Keyboard)
+	}
+	if src.Mouse != nil {
+		if dst.Interaction.Mouse == nil {
+			dst.Interaction.Mouse = &playlist.MousePrefs{}
 		}
-		var ip playlist.InteractionPrefs
-		if err := json.Unmarshal(src.Interaction, &ip); err == nil {
-			if len(ip.Keyboard) > 0 {
-				dst.Interaction.Keyboard = ip.Keyboard
-			}
-			if ip.Mouse != nil {
-				dst.Interaction.Mouse = ip.Mouse
-			}
-		}
+		m := dst.Interaction.Mouse
+		overlayBool(&m.Click, src.Mouse.Click)
+		overlayBool(&m.Scroll, src.Mouse.Scroll)
+		overlayBool(&m.Drag, src.Mouse.Drag)
+		overlayBool(&m.Hover, src.Mouse.Hover)
 	}
 }
 
