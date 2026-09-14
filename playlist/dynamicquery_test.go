@@ -1106,6 +1106,46 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 }
 
+// A present-empty contentReasons must survive resolve + re-serialize as `[]`, not `null`.
+// clonePlaylist runs on every ResolveDynamicQuery call including the no-dynamicQuery path, so a
+// clone that collapsed present-empty to nil would turn a valid rated playlist into one the
+// extension schema rejects, and would change the signed JCS payload on the way through.
+func TestResolveDynamicQuery_clonePreservesPresentEmptyContentReasons(t *testing.T) {
+	t.Parallel()
+	orig := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source:         "https://static",
+			ContentRating:  ratingPtr(contentrating.RatingGeneral),
+			ContentReasons: &[]string{},
+		}},
+	}
+	out, err := orig.ResolveDynamicQuery(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Items[0].ContentReasons == nil {
+		t.Fatal("expected contentReasons to stay present")
+	}
+	if *out.Items[0].ContentReasons == nil {
+		t.Fatal("expected a non-nil empty slice, not a pointer to nil")
+	}
+	if len(*out.Items[0].ContentReasons) != 0 {
+		t.Fatalf("reasons: %+v", *out.Items[0].ContentReasons)
+	}
+	encoded, err := json.Marshal(out.Items[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"contentReasons":[]`) {
+		t.Fatalf("want contentReasons:[] in %s", encoded)
+	}
+	if err := validate.PlaylistItemWithPlaylistsAndContentRatingExtensions(encoded); err != nil {
+		t.Fatalf("re-serialized item must stay schema-valid: %v", err)
+	}
+}
+
 func TestResolveDynamicQuery_httpsJSONPost(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

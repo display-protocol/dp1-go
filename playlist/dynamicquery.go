@@ -540,7 +540,14 @@ func clonePlaylist(p *Playlist) *Playlist {
 			c.Items[i].ContentRating = &r
 		}
 		if c.Items[i].ContentReasons != nil {
-			reasons := append([]string(nil), (*c.Items[i].ContentReasons)...)
+			// make+copy, not append([]string(nil), ...): appending nothing to a nil slice yields
+			// nil, so a present-empty contentReasons would survive the clone as a non-nil pointer
+			// to a nil slice and re-marshal as "contentReasons": null — which the extension schema
+			// rejects, and which changes the signed JCS payload. The pointer-to-slice field exists
+			// precisely to keep absent and present-empty distinct, so the clone must keep them so.
+			src := *c.Items[i].ContentReasons
+			reasons := make([]string, len(src))
+			copy(reasons, src)
 			c.Items[i].ContentReasons = &reasons
 		}
 	}
