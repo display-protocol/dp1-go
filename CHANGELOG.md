@@ -3,6 +3,39 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## v0.6.1 — 2026-09-14
+
+Aligns the SDK with the artist profile added to the Ref Manifest in
+[display-protocol/dp1#51](https://github.com/display-protocol/dp1/pull/51) (refVersion 1.1.0,
+core `ref-manifest.md` §4.1). Additive: every document that validated before still does, and no
+exported type changes shape.
+
+### Added
+
+- `refmanifest.Artist` gains `Addresses []string`, `Avatar *Thumbnail`, `Biographies []Biography`
+  and `Links []Link`, with new `refmanifest.Biography` (`Text`, `Source`, `SourceURL`) and
+  `refmanifest.Link` (`Type`, `URL`) and the `LinkTypeWebsite` / `LinkTypeTwitter` /
+  `LinkTypeInstagram` / `LinkTypeOther` constants for the schema's `links[].type` enumeration.
+- The embedded `core/v1.1.0/ref-manifest.json` is byte-identical to upstream `main`, so
+  `ParseAndValidateRefManifest` now enforces the new constraints: each address non-empty, each
+  biography with non-empty `text`, each link with a full URL (`format: uri`, so a bare handle such
+  as `@REAS` is rejected) and a `type` from the enumeration.
+
+### Deprecated
+
+- `refmanifest.Artist.URL` — the 1.0.0 single profile URL. Still accepted on the wire; write a
+  `Links` entry of type `LinkTypeWebsite` instead. Per the spec, a producer that emits both keeps
+  them equal and consumers read `Links` first, falling back to `URL` only when `Links` is absent
+  or empty. The SDK checks neither rule; it validates shape only.
+
+### Not enforced, by design
+
+`Addresses` is the only field the spec lets a consumer use to recognise one artist across
+producers, and it is a signed claim of the producer rather than a fact: a wallet can be shared, so
+two records whose address lists intersect are not thereby one artist, and contract addresses
+(Tezos `KT1…`, EVM collection contracts) must not be listed. None of that is expressible in JSON
+Schema, so the SDK does not check it — the same posture it takes for every other prose rule.
+
 ## v0.6.0 — 2026-08-14
 
 Aligns the SDK with two DP-1 spec changes: inline carriage of a Ref Manifest on a playlist item
