@@ -154,7 +154,9 @@ Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `Co
 
 ## Schemas
 
-Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 plus the registry extensions, including the playlists and content-rating composed validators).
+Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with the optional item-level overlay `$defs/PlaylistItemExtension` — `note`, `displayAt`, `inlineManifest` — and `playlist_with_extension.json` / `playlist_item_with_extension.json`, which both reference that single overlay so whole-playlist and single-item validation cannot drift).
+
+`extensions/content-rating/` is the exception: a **draft** overlay (`$id` … `/v0.1.0/`) with no counterpart in the spec repo yet, authored here rather than copied from upstream. Its four composed files (`playlist_with_extension.json`, `playlist_item_with_extension.json`, and the `_with_playlists_extension` pair) resolve to the same `$defs/PlaylistItemExtension` — the item files `$ref` it directly, the playlist files reach it through `schema.json`'s `items` array — on the same no-drift rule as playlists. Expect the shape to move when the spec text lands.
 
 ## Testing
 
