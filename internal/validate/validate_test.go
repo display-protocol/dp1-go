@@ -374,6 +374,19 @@ func TestContentRatingExtension(t *testing.T) {
 		assertErrValidation(t, PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)))
 	}
 
+	// The content-rating-only item validator must agree with the combined one on every case
+	// above. Both composed files reference the same $defs/PlaylistItemExtension overlay, so a
+	// disagreement here means one of them stopped pointing at it and the two validation paths
+	// have drifted.
+	for _, item := range valid {
+		if err := PlaylistItemWithContentRatingExtension([]byte(item)); err != nil {
+			t.Fatalf("valid item %s (content-rating only): %v", item, err)
+		}
+	}
+	for _, item := range invalid {
+		assertErrValidation(t, PlaylistItemWithContentRatingExtension([]byte(item)))
+	}
+
 	doc := fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":"general"}],%s}`, playlistSigBlock)
 	if err := PlaylistWithContentRatingExtension([]byte(doc)); err != nil {
 		t.Fatal(err)

@@ -24,6 +24,12 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 
 type errReadCloser struct{}
 
+func (errReadCloser) Read(p []byte) (int, error) { return 0, errors.New("read body") }
+func (errReadCloser) Close() error               { return nil }
+
+// testDynamicQueryInsecure opts into HTTP and non-public hosts for httptest servers.
+var testDynamicQueryInsecure = &DynamicQueryFetchOptions{AllowInsecureHTTP: true}
+
 func TestDynamicQueryContentRatingValidation(t *testing.T) {
 	t.Parallel()
 	dq := &playlists.DynamicQuery{
@@ -45,12 +51,6 @@ func TestDynamicQueryContentRatingValidation(t *testing.T) {
 		t.Fatalf("expected invalid item, got %v", err)
 	}
 }
-
-func (errReadCloser) Read(p []byte) (int, error) { return 0, errors.New("read body") }
-func (errReadCloser) Close() error               { return nil }
-
-// testDynamicQueryInsecure opts into HTTP and non-public hosts for httptest servers.
-var testDynamicQueryInsecure = &DynamicQueryFetchOptions{AllowInsecureHTTP: true}
 
 func assertErrDynamicQueryEndpointPolicy(t *testing.T, err error) {
 	t.Helper()
