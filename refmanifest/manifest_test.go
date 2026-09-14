@@ -13,8 +13,14 @@ func TestManifest_JSONRoundTrip(t *testing.T) {
 		Created:    "2025-01-01T00:00:00Z",
 		Locale:     "en",
 		Metadata: &Metadata{
-			Title:   "X",
-			Artists: []Artist{{Name: "N"}},
+			Title: "X",
+			Artists: []Artist{{
+				Name:        "N",
+				Addresses:   []string{"0xabc"},
+				Avatar:      &Thumbnail{URI: "https://a.example/n.jpg"},
+				Biographies: []Biography{{Text: "Bio", Source: "S", SourceURL: "https://s.example"}},
+				Links:       []Link{{Type: LinkTypeWebsite, URL: "https://n.example"}},
+			}},
 		},
 		Controls: &Controls{
 			Safety: &SafetyControls{
@@ -36,6 +42,11 @@ func TestManifest_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Metadata.Title != "X" {
 		t.Fatal(out.Metadata.Title)
+	}
+	a := out.Metadata.Artists[0]
+	if a.Addresses[0] != "0xabc" || a.Avatar.URI != "https://a.example/n.jpg" ||
+		a.Biographies[0].SourceURL != "https://s.example" || a.Links[0].Type != LinkTypeWebsite {
+		t.Fatalf("artist profile did not round-trip: %+v", a)
 	}
 }
 
