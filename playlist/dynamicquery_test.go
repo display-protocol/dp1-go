@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/internal/validate"
@@ -1026,6 +1027,8 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 				DisplayAt:      strPtr("2026-07-21T00:00:00Z"),
 				Override:       json.RawMessage(`{"display":{"scaling":"fill"}}`),
 				InlineManifest: json.RawMessage(`{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en"}`),
+				ContentRating:  ratingPtr(contentrating.RatingMature),
+				ContentReasons: &[]string{"nudity"},
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -1060,6 +1063,22 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	*out.Items[0].DisplayAt = "2099-01-01T00:00:00Z"
 	if *orig.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
 		t.Fatal("mutating cloned displayAt must not change original")
+	}
+	// Content-rating fields are pointers, so a shallow copy would let a consumer's policy pass
+	// rewrite the rating on the playlist it was handed.
+	if out.Items[0].ContentRating == nil || out.Items[0].ContentRating == orig.Items[0].ContentRating {
+		t.Fatal("expected cloned item contentRating pointer")
+	}
+	*out.Items[0].ContentRating = contentrating.RatingGeneral
+	if *orig.Items[0].ContentRating != contentrating.RatingMature {
+		t.Fatal("mutating cloned contentRating must not change original")
+	}
+	if out.Items[0].ContentReasons == nil || out.Items[0].ContentReasons == orig.Items[0].ContentReasons {
+		t.Fatal("expected cloned item contentReasons pointer")
+	}
+	(*out.Items[0].ContentReasons)[0] = "flashing imagery"
+	if (*orig.Items[0].ContentReasons)[0] != "nudity" {
+		t.Fatal("mutating cloned contentReasons must not change original")
 	}
 	if len(out.Signatures) != len(orig.Signatures) || &out.Signatures[0] == &orig.Signatures[0] {
 		t.Fatal("expected cloned signatures slice")

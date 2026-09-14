@@ -174,6 +174,18 @@ func TestParseAndValidatePlaylistWithContentRatingExtension(t *testing.T) {
 	if out.Items[0].ContentRating == nil || *out.Items[0].ContentRating != contentrating.RatingMature {
 		t.Fatalf("rating: %+v", out.Items[0].ContentRating)
 	}
+	// The core + content-rating entrypoint must accept the same document: the playlists overlay
+	// is optional, so a producer that ships ratings without it still parses.
+	coreOnly, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coreOnly.Items[0].ContentRating == nil || *coreOnly.Items[0].ContentRating != contentrating.RatingMature {
+		t.Fatalf("rating (core+content-rating): %+v", coreOnly.Items[0].ContentRating)
+	}
+	if coreOnly.Items[0].ContentReasons == nil || len(*coreOnly.Items[0].ContentReasons) != 1 {
+		t.Fatalf("reasons: %+v", coreOnly.Items[0].ContentReasons)
+	}
 	if err := sign.VerifyMultiSignature(signed, out.Signatures[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +196,9 @@ func TestParseAndValidatePlaylistWithContentRatingExtension(t *testing.T) {
 	malformed := []byte(strings.Replace(string(signed), `"contentRating":"mature"`, `"contentRating":null`, 1))
 	if _, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension(malformed); err == nil {
 		t.Fatal("expected present null contentRating to fail")
+	}
+	if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(malformed); err == nil {
+		t.Fatal("expected present null contentRating to fail with both overlays")
 	}
 }
 
@@ -499,6 +514,32 @@ func TestParseAndValidate_decodeErrors(t *testing.T) {
 			dp1.PlaylistWithPlaylistsExtensionSchemaValidate = func([]byte) error { return nil }
 			t.Cleanup(func() { dp1.PlaylistWithPlaylistsExtensionSchemaValidate = orig })
 			_, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":true}],"signatures":[]}`))
+			if err == nil || !strings.Contains(err.Error(), "decode playlist") {
+				t.Fatalf("got %v", err)
+			}
+			var coded *dp1.CodedError
+			if !errors.As(err, &coded) || coded.Code != dp1.CodePlaylistInvalid {
+				t.Fatalf("expected CodePlaylistInvalid, got %v", err)
+			}
+		}},
+		{"playlist_content_rating", func(t *testing.T) {
+			orig := dp1.PlaylistWithContentRatingExtensionSchemaValidate
+			dp1.PlaylistWithContentRatingExtensionSchemaValidate = func([]byte) error { return nil }
+			t.Cleanup(func() { dp1.PlaylistWithContentRatingExtensionSchemaValidate = orig })
+			_, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":1}],"signatures":[]}`))
+			if err == nil || !strings.Contains(err.Error(), "decode playlist") {
+				t.Fatalf("got %v", err)
+			}
+			var coded *dp1.CodedError
+			if !errors.As(err, &coded) || coded.Code != dp1.CodePlaylistInvalid {
+				t.Fatalf("expected CodePlaylistInvalid, got %v", err)
+			}
+		}},
+		{"playlist_playlists_and_content_rating", func(t *testing.T) {
+			orig := dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate
+			dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate = func([]byte) error { return nil }
+			t.Cleanup(func() { dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate = orig })
+			_, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentReasons":"nudity"}],"signatures":[]}`))
 			if err == nil || !strings.Contains(err.Error(), "decode playlist") {
 				t.Fatalf("got %v", err)
 			}

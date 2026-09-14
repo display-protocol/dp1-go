@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 )
 
@@ -62,6 +63,8 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func ratingPtr(r contentrating.Rating) *contentrating.Rating { return &r }
 
 func displayAtString(p *string) string {
 	if p == nil {
