@@ -13,6 +13,26 @@ compatibility; every break is listed here with the migration.
 - Reserve `contentBlocked` for valid items excluded by consumer policy. Invalid metadata remains
   `playlistInvalid`. Existing JCS/signature behavior is unchanged; extension fields are signed.
 
+### Source compatibility
+
+`playlist.PlaylistItem` gains two exported fields (`ContentRating`, `ContentReasons`). No existing
+field is removed or retyped, so keyed literals, field access, and JSON round-trips are unaffected.
+An **unkeyed** composite literal — `playlist.PlaylistItem{"https://a", …}` — must supply every
+field positionally and will fail to compile; migrate it to a keyed literal, which `go vet`'s
+`composites` check already recommends for a struct from another package. This matches how v0.6.0
+handled adding `InlineManifest` to the same struct (listed under Added, not under the breaking
+section, which was reserved for the `Thumbnail.W`/`.H` retype).
+
+### Known gaps
+
+- Core and playlists-only parsing reject a document the core schema accepted when an extension
+  field carries the wrong JSON type: `ParseAndValidatePlaylist` on `{"contentRating": 1}`
+  validates, then fails at `json.Unmarshal`. This is the pre-existing behavior of the typed
+  extension fields `note` and `displayAt` on v0.6.1, not new to content rating — only
+  `inlineManifest` avoids it, by being `json.RawMessage`. Closing it means deciding whether every
+  extension field becomes raw-plus-accessor, which is a wider API question than this change, so
+  it is recorded here rather than half-fixed for one field.
+
 ## v0.6.1 — 2026-09-14
 
 Aligns the SDK with the artist profile added to the Ref Manifest in
