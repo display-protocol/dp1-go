@@ -84,9 +84,68 @@ type PlaylistItem struct {
 	// ContentRating and ContentReasons are draft content-rating extension fields.
 	// Nil ContentRating means the field was absent (unrated). Parse with a content-rating-aware
 	// helper before acting on either field; present null and malformed values must be rejected.
+	//
+	// Both are typed rather than raw, so UnmarshalJSON decodes them leniently — see the comment
+	// there for why a typed extension field would otherwise break the core-only parser.
 	ContentRating *contentrating.Rating `json:"contentRating,omitempty"`
 	// Pointer-to-slice preserves absent versus a present empty array across decode/marshal.
 	ContentReasons *[]string `json:"contentReasons,omitempty"`
+}
+
+// UnmarshalJSON decodes an item, tolerating content-rating members whose JSON type does not fit
+// the typed fields.
+//
+// Core DP-1 and the playlists extension both permit item properties they do not describe, so
+// ParseAndValidatePlaylist accepts a document carrying `"contentRating": 1`. With a plain typed
+// field, the decode step that follows schema validation would then fail on a document the schema
+// had just accepted, and a consumer that never opted into this draft extension could no longer
+// read the playlist at all. That is the same schema/decode mismatch InlineManifest avoids by
+// staying raw; these fields stay typed for the consumers that do implement the extension, and
+// pay for it here instead.
+//
+// A member that does not fit is left nil — the same "absent, therefore unrated" state a
+// core-only consumer would have seen before this extension existed. This is not a silent failure
+// on the path that matters: ParseAndValidatePlaylistWithContentRatingExtension and its combined
+// sibling validate against the extension schema *before* decoding, so a malformed rating is
+// rejected loudly there and can never reach this leniency. Only the parsers that never checked
+// the field in the first place see it.
+//
+// Note the round-trip consequence: a value that fits is preserved, but re-encoding an item whose
+// rating did not fit drops that member and changes the JCS payload. Sign and verify the original
+// bytes, as DP-1 §7.1 requires, not a re-encode.
+func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
+	// Local type to strip this method, or json.Unmarshal would call it again. The outer raw
+	// fields shadow the embedded typed ones: encoding/json prefers the shallower field.
+	type item PlaylistItem
+	var shadow struct {
+		item
+		ContentRating  json.RawMessage `json:"contentRating"`
+		ContentReasons json.RawMessage `json:"contentReasons"`
+	}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	*it = PlaylistItem(shadow.item)
+	it.ContentRating, it.ContentReasons = nil, nil
+
+	if raw := shadow.ContentRating; len(raw) > 0 && string(raw) != "null" {
+		var rating contentrating.Rating
+		if json.Unmarshal(raw, &rating) == nil {
+			it.ContentRating = &rating
+		}
+	}
+	if raw := shadow.ContentReasons; len(raw) > 0 && string(raw) != "null" {
+		var reasons []string
+		if json.Unmarshal(raw, &reasons) == nil {
+			if reasons == nil {
+				// Defensive: only "null" decodes to nil, and it is excluded above. Keep the
+				// present-versus-present-empty distinction the pointer-to-slice exists for.
+				reasons = []string{}
+			}
+			it.ContentReasons = &reasons
+		}
+	}
+	return nil
 }
 
 // ParseInlineManifest decodes the item's inline Ref Manifest (§3.6).

@@ -23,15 +23,29 @@ field positionally and will fail to compile; migrate it to a keyed literal, whic
 handled adding `InlineManifest` to the same struct (listed under Added, not under the breaking
 section, which was reserved for the `Thumbnail.W`/`.H` retype).
 
-### Known gaps
+### Parser tolerance
 
-- Core and playlists-only parsing reject a document the core schema accepted when an extension
-  field carries the wrong JSON type: `ParseAndValidatePlaylist` on `{"contentRating": 1}`
-  validates, then fails at `json.Unmarshal`. This is the pre-existing behavior of the typed
-  extension fields `note` and `displayAt` on v0.6.1, not new to content rating — only
-  `inlineManifest` avoids it, by being `json.RawMessage`. Closing it means deciding whether every
-  extension field becomes raw-plus-accessor, which is a wider API question than this change, so
-  it is recorded here rather than half-fixed for one field.
+`playlist.PlaylistItem` now has an `UnmarshalJSON` that decodes the two content-rating members
+leniently. Core DP-1 and the playlists extension both permit item properties they do not
+describe, so `ParseAndValidatePlaylist` accepts a document carrying `"contentRating": 1`; with a
+plain typed field the decode step that follows schema validation would then fail on a document
+the schema had just accepted, locking a consumer that never opted into this draft extension out
+of the playlist entirely. A member that does not fit the typed field is left nil — the same
+"absent, therefore unrated" state that consumer saw before the extension existed. A member that
+does fit still decodes, including a rating string this SDK does not yet know.
+
+This is not leniency on the paths that implement the extension:
+`ParseAndValidatePlaylistWithContentRatingExtension` and its combined sibling validate against
+the extension schema *before* decoding, so a malformed or unknown rating is rejected there and
+never reaches the tolerant decode.
+
+Round-trip consequence: a member that fits is preserved, but re-encoding an item whose rating did
+not fit drops it and changes the JCS payload. Sign and verify the original bytes, per §7.1, not a
+re-encode.
+
+Note that `note` and `displayAt` — the typed playlists-extension fields shipped through v0.6.1 —
+still have the untolerated behavior on the core-only path; only `inlineManifest` (raw) and now
+the content-rating members avoid it. Making those two consistent is a separate change.
 
 ## v0.6.1 — 2026-09-14
 

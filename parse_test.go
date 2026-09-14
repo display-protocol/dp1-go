@@ -202,6 +202,81 @@ func TestParseAndValidatePlaylistWithContentRatingExtension(t *testing.T) {
 	}
 }
 
+// Core DP-1 and the playlists extension both permit item properties they do not describe, so a
+// consumer that never opted into the draft content-rating extension must still be able to read a
+// playlist carrying one — including a malformed or newer representation it cannot type. Without
+// the lenient decode in PlaylistItem.UnmarshalJSON, the typed fields would fail json.Unmarshal on
+// a document the selected schema had just accepted.
+func TestContentRatingToleratedByNonAwareParsers(t *testing.T) {
+	t.Parallel()
+	const sigBlock = `"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK","ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]`
+
+	for _, tc := range []struct {
+		name string
+		item string
+		// wantRating is the rating the non-aware parsers should surface; "" means nil, i.e. the
+		// same "absent, therefore unrated" state seen before the extension existed.
+		wantRating contentrating.Rating
+	}{
+		{"rating_wrong_type", `"source":"https://a","contentRating":1`, ""},
+		{"rating_future_value", `"source":"https://a","contentRating":"adults-only"`, "adults-only"},
+		{"reasons_wrong_type", `"source":"https://a","contentReasons":"nudity"`, ""},
+		{"reasons_wrong_element_type", `"source":"https://a","contentReasons":[1,2]`, ""},
+		{"rating_null", `"source":"https://a","contentRating":null`, ""},
+		{"well_formed_still_decodes", `"source":"https://a","contentRating":"mature"`, contentrating.RatingMature},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"dpVersion":"1.1.0","title":"x","items":[{` + tc.item + `}],` + sigBlock + `}`)
+
+			core, err := dp1.ParseAndValidatePlaylist(doc)
+			if err != nil {
+				t.Fatalf("core parser must accept the document: %v", err)
+			}
+			withPlaylists, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+			if err != nil {
+				t.Fatalf("playlists-only parser must accept the document: %v", err)
+			}
+
+			for _, got := range []*playlist.Playlist{core, withPlaylists} {
+				switch {
+				case tc.wantRating == "":
+					if got.Items[0].ContentRating != nil {
+						t.Fatalf("want nil rating, got %q", *got.Items[0].ContentRating)
+					}
+				case got.Items[0].ContentRating == nil:
+					t.Fatalf("want rating %q, got nil", tc.wantRating)
+				case *got.Items[0].ContentRating != tc.wantRating:
+					t.Fatalf("want rating %q, got %q", tc.wantRating, *got.Items[0].ContentRating)
+				}
+			}
+		})
+	}
+}
+
+// The leniency above must not reach the parsers that do implement the extension: those validate
+// against the schema before decoding, so a malformed rating is rejected there rather than
+// silently flattened to nil.
+func TestContentRatingLeniencyDoesNotReachAwareParsers(t *testing.T) {
+	t.Parallel()
+	const sigBlock = `"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK","ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]`
+	for _, item := range []string{
+		`"source":"https://a","contentRating":1`,
+		`"source":"https://a","contentRating":"adults-only"`,
+		`"source":"https://a","contentReasons":"nudity"`,
+		`"source":"https://a","contentReasons":[1,2]`,
+		`"source":"https://a","contentRating":null`,
+	} {
+		doc := []byte(`{"dpVersion":"1.1.0","title":"x","items":[{` + item + `}],` + sigBlock + `}`)
+		if _, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension(doc); err == nil {
+			t.Fatalf("content-rating-aware parser must reject %s", item)
+		}
+		if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(doc); err == nil {
+			t.Fatalf("combined parser must reject %s", item)
+		}
+	}
+}
+
 func TestContentReasonsPresenceRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -526,7 +601,9 @@ func TestParseAndValidate_decodeErrors(t *testing.T) {
 			orig := dp1.PlaylistWithContentRatingExtensionSchemaValidate
 			dp1.PlaylistWithContentRatingExtensionSchemaValidate = func([]byte) error { return nil }
 			t.Cleanup(func() { dp1.PlaylistWithContentRatingExtensionSchemaValidate = orig })
-			_, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":1}],"signatures":[]}`))
+			// A core field, not a rating: content-rating members decode leniently by design
+			// (see PlaylistItem.UnmarshalJSON), so they cannot exercise the decode-error path.
+			_, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":true,"contentRating":"mature"}],"signatures":[]}`))
 			if err == nil || !strings.Contains(err.Error(), "decode playlist") {
 				t.Fatalf("got %v", err)
 			}
@@ -539,7 +616,7 @@ func TestParseAndValidate_decodeErrors(t *testing.T) {
 			orig := dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate
 			dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate = func([]byte) error { return nil }
 			t.Cleanup(func() { dp1.PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate = orig })
-			_, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentReasons":"nudity"}],"signatures":[]}`))
+			_, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions([]byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":true,"contentReasons":["nudity"]}],"signatures":[]}`))
 			if err == nil || !strings.Contains(err.Error(), "decode playlist") {
 				t.Fatalf("got %v", err)
 			}
