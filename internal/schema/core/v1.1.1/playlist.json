@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dp1.feralfile.com/extensions/playlists/v0.1.0/bundles/playlist-core-v1.1.0.json",
-  "title": "DP-1 Playlist (core bundle for playlists extension)",
-  "description": "Aligned with core v1.1.0 playlist.json except items.minItems is relaxed and empty items requires dynamicQuery. Used only as part of the playlists extension composed schema; validators for core-only documents must still use the canonical core playlist schema.",
+  "$id": "https://dp1.feralfile.com/schemas/v1.1.1/playlist.json",
+  "title": "DP-1 Playlist",
+  "description": "A platform-neutral playlist format for distributing, verifying, and preserving blockchain-native digital art (BNDA)",
   "type": "object",
   "required": ["dpVersion", "title", "items"],
   "anyOf": [
@@ -11,21 +11,6 @@
     },
     {
       "required": ["signature"]
-    }
-  ],
-  "allOf": [
-    {
-      "description": "If items is empty, dynamicQuery must be present (validated against the playlists extension schema in the composed overlay).",
-      "if": {
-        "properties": {
-          "items": {
-            "maxItems": 0
-          }
-        }
-      },
-      "then": {
-        "required": ["dynamicQuery"]
-      }
     }
   ],
   "properties": {
@@ -56,6 +41,9 @@
       "description": "ISO 8601 timestamp when the playlist was created",
       "format": "date-time"
     },
+    "note": {
+      "$ref": "#/$defs/Note"
+    },
     "defaults": {
       "type": "object",
       "description": "Default values inherited by all playlist items unless explicitly overridden",
@@ -75,8 +63,8 @@
     },
     "items": {
       "type": "array",
-      "description": "Ordered list of playlist items. May be empty when dynamicQuery is present (see allOf).",
-      "minItems": 0,
+      "description": "Ordered list of playlist items",
+      "minItems": 1,
       "items": {
         "$ref": "#/$defs/PlaylistItem"
       }
@@ -133,6 +121,9 @@
           "description": "URI to external metadata/controls manifest",
           "format": "uri"
         },
+        "note": {
+          "$ref": "#/$defs/Note"
+        },
         "override": {
           "type": "object",
           "description": "Fields that override values from ref manifest"
@@ -145,6 +136,24 @@
         },
         "provenance": {
           "$ref": "#/$defs/ProvenanceBlock"
+        }
+      }
+    },
+    "Note": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Short note for supporting players to render as an intermission card",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "display_duration": {
+          "type": "integer",
+          "description": "Preferred display duration in seconds",
+          "minimum": 1,
+          "default": 20
         }
       }
     },
