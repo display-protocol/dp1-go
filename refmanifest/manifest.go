@@ -24,12 +24,70 @@ type Metadata struct {
 	Thumbnails  map[string]Thumbnail `json:"thumbnails,omitempty"`
 }
 
-// Artist identifies a creator.
+// Artist identifies a creator and, from refVersion 1.1.0, carries a
+// profile snapshot taken when the manifest was authored (spec §4.1).
+//
+// Identity: only Addresses may be used to recognize the same artist across
+// producers. ID is producer-scoped (two producers label one artist with
+// different ids), and Name is display text. Addresses is a signed claim of
+// the producer, not a fact — a wallet can be shared by a collective or a
+// collaborative mint — so consumers must not merge two artist records merely
+// because their address lists intersect.
+//
+// Profile fields (Avatar, Biographies, Links) are the offline fallback, not
+// the source of truth; a consumer may overlay fresher registry data keyed by
+// Addresses.
 type Artist struct {
 	Name string `json:"name"`
-	ID   string `json:"id,omitempty"`
-	URL  string `json:"url,omitempty"`
+	// ID is an opaque, producer-scoped label. Not an identity.
+	ID string `json:"id,omitempty"`
+	// URL is the refVersion 1.0.0 single profile URL.
+	//
+	// Deprecated: superseded by Links (write an entry of type "website").
+	// Still valid on the wire; a producer that emits both must keep URL equal
+	// to that entry. Consumers read Links first and fall back to URL only
+	// when Links is absent or empty.
+	URL string `json:"url,omitempty"`
+	// Addresses holds raw wallet addresses (EVM 0x…, Tezos tz1…tz4). Contract
+	// addresses (Tezos KT1…, EVM collection contracts) name a collection, not
+	// a person, and must not be listed — they belong in provenance.contract.
+	Addresses []string `json:"addresses,omitempty"`
+	// Avatar is a portrait or profile image; same shape as a thumbnail.
+	Avatar *Thumbnail `json:"avatar,omitempty"`
+	// Biographies are ordered by the producer's preference; when only one
+	// fits, show the first.
+	Biographies []Biography `json:"biographies,omitempty"`
+	// Links are typed profile links with full URLs, never bare handles.
+	Links []Link `json:"links,omitempty"`
 }
+
+// Biography is one biographical text with optional attribution.
+type Biography struct {
+	// Text is plain text, no markup.
+	Text string `json:"text"`
+	// Source names the publication or platform the text comes from.
+	Source string `json:"source,omitempty"`
+	// SourceURL is the URL of that source.
+	SourceURL string `json:"sourceUrl,omitempty"`
+}
+
+// Link is an external profile link.
+type Link struct {
+	// Type is one of the LinkType* constants; the schema rejects anything else.
+	Type string `json:"type"`
+	// URL is always a full URL, never a bare handle, so players carry no
+	// per-network URL rules.
+	URL string `json:"url"`
+}
+
+// Link types accepted by the schema's links[].type enumeration. A destination
+// the enumeration does not name is written as LinkTypeOther.
+const (
+	LinkTypeWebsite   = "website"
+	LinkTypeTwitter   = "twitter"
+	LinkTypeInstagram = "instagram"
+	LinkTypeOther     = "other"
+)
 
 // Thumbnail references a preview image.
 //

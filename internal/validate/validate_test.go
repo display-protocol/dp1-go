@@ -136,12 +136,50 @@ func TestRefManifest_validationFailures(t *testing.T) {
 		{"id_empty", `{"refVersion":"0.1.0","id":"","created":"2025-01-01T00:00:00Z","locale":"en"}`},
 		{"created_bad_datetime", `{"refVersion":"0.1.0","id":"r","created":"not-rfc3339","locale":"en"}`},
 		{"locale_bad", `{"refVersion":"0.1.0","id":"r","created":"2025-01-01T00:00:00Z","locale":"english"}`},
+		// Artist profile (refVersion 1.1.0). Each case violates exactly one
+		// constraint so that it stops passing only when that constraint drops
+		// out of the schema.
+		{"artist_address_empty", refManifestWithArtist(`{"name":"A","addresses":[""]}`)},
+		{"artist_biography_missing_text", refManifestWithArtist(`{"name":"A","biographies":[{"source":"DAM"}]}`)},
+		{"artist_biography_text_empty", refManifestWithArtist(`{"name":"A","biographies":[{"text":""}]}`)},
+		{"artist_link_missing_url", refManifestWithArtist(`{"name":"A","links":[{"type":"twitter"}]}`)},
+		{"artist_link_bare_handle", refManifestWithArtist(`{"name":"A","links":[{"type":"twitter","url":"@REAS"}]}`)},
+		{"artist_link_unknown_type", refManifestWithArtist(`{"name":"A","links":[{"type":"mastodon","url":"https://example.social/@a"}]}`)},
+		{"artist_avatar_missing_uri", refManifestWithArtist(`{"name":"A","avatar":{"w":512,"h":512}}`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assertErrValidation(t, RefManifest([]byte(tc.doc)))
 		})
+	}
+}
+
+// refManifestWithArtist wraps one artist object in an otherwise valid 1.1.0
+// manifest, so an artist-profile test case names only the field it probes.
+func refManifestWithArtist(artist string) string {
+	return `{"refVersion":"1.1.0","id":"r","created":"2025-01-01T00:00:00Z","locale":"en","metadata":{"artists":[` + artist + `]}}`
+}
+
+func TestRefManifest_artistProfileAccepted(t *testing.T) {
+	t.Parallel()
+	// The full 1.1.0 profile as a producer should emit it: no deprecated url,
+	// full URLs in links, w/h present on the avatar.
+	doc := refManifestWithArtist(`{
+		"name":"Casey Reas","id":"58",
+		"addresses":["0x457ee5f723c7606c12a7264b52e285906f91eea6","tz1LBwyJMRkH4tcG19KwYzAW7fLYbjFmWdWy"],
+		"avatar":{"uri":"https://example.com/avatar.jpg","w":512,"h":512},
+		"biographies":[{"text":"Software artist.","source":"DAM","sourceUrl":"https://dam.org/reas"},{"text":"Co-founder of Processing."}],
+		"links":[{"type":"website","url":"https://reas.com"},{"type":"other","url":"https://example.social/@reas"}]
+	}`)
+	if err := RefManifest([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+	// A 1.0.0 artist — name/id/url only — stays valid: the bump is additive
+	// and url, though deprecated, is still accepted.
+	legacy := refManifestWithArtist(`{"name":"A","id":"","url":"https://a.example"}`)
+	if err := RefManifest([]byte(legacy)); err != nil {
+		t.Fatal(err)
 	}
 }
 
