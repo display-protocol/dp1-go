@@ -129,32 +129,47 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 	// Local type to strip this method, or json.Unmarshal would call it again. The outer raw
 	// fields shadow the embedded typed ones: encoding/json prefers the shallower field.
 	type item PlaylistItem
-	var shadow struct {
+
+	// Seed the shadow from the receiver rather than starting zero. encoding/json merges into a
+	// struct — it writes only the members the document carries and leaves the rest alone — and
+	// callers rely on that: decoding into a reused variable, and decoding a playlist whose Items
+	// slice already has elements, since json reuses the existing backing array. Starting from a
+	// zero value would silently clear Title, DisplayAt, InlineManifest and the rest on a partial
+	// document, and would blank the item outright on a literal null, which json treats as a no-op.
+	shadow := struct {
 		item
 		ContentRating  json.RawMessage `json:"contentRating"`
 		ContentReasons json.RawMessage `json:"contentReasons"`
-	}
+	}{item: item(*it)}
 	if err := json.Unmarshal(data, &shadow); err != nil {
 		return err
 	}
 	*it = PlaylistItem(shadow.item)
-	it.ContentRating, it.ContentReasons = nil, nil
 
-	if raw := shadow.ContentRating; len(raw) > 0 && string(raw) != "null" {
-		var rating contentrating.Rating
-		if json.Unmarshal(raw, &rating) == nil {
-			it.ContentRating = &rating
+	// A nil raw member means the document did not carry it, so the seeded value stands. Only a
+	// member that is actually present replaces what the receiver already held — including a
+	// present null or an untypeable value, which clear it.
+	if raw := shadow.ContentRating; raw != nil {
+		it.ContentRating = nil
+		if string(raw) != "null" {
+			var rating contentrating.Rating
+			if json.Unmarshal(raw, &rating) == nil {
+				it.ContentRating = &rating
+			}
 		}
 	}
-	if raw := shadow.ContentReasons; len(raw) > 0 && string(raw) != "null" {
-		var reasons []string
-		if json.Unmarshal(raw, &reasons) == nil {
-			if reasons == nil {
-				// Defensive: only "null" decodes to nil, and it is excluded above. Keep the
-				// present-versus-present-empty distinction the pointer-to-slice exists for.
-				reasons = []string{}
+	if raw := shadow.ContentReasons; raw != nil {
+		it.ContentReasons = nil
+		if string(raw) != "null" {
+			var reasons []string
+			if json.Unmarshal(raw, &reasons) == nil {
+				if reasons == nil {
+					// Defensive: only "null" decodes to nil, and it is excluded above. Keep the
+					// present-versus-present-empty distinction the pointer-to-slice exists for.
+					reasons = []string{}
+				}
+				it.ContentReasons = &reasons
 			}
-			it.ContentReasons = &reasons
 		}
 	}
 	return nil

@@ -259,3 +259,92 @@ func TestPlaylistItem_ParseInlineManifest_absentAndInvalid(t *testing.T) {
 		}
 	}
 }
+
+// PlaylistItem has a custom UnmarshalJSON, so it must keep encoding/json's merge semantics:
+// decoding writes only the members the document carries and leaves the rest of the receiver
+// alone, and a literal null is a no-op. Callers depend on this when they decode into a reused
+// variable, and json itself depends on it when it reuses the existing backing array of a
+// non-empty Items slice. A shadow struct seeded from zero instead of from the receiver would
+// silently blank Title, DisplayAt, InlineManifest and the rating on a partial document.
+func TestPlaylistItemUnmarshalMergesIntoReceiver(t *testing.T) {
+	t.Parallel()
+
+	t.Run("partial document keeps omitted fields", func(t *testing.T) {
+		t.Parallel()
+		reasons := []string{"nudity"}
+		it := PlaylistItem{
+			Source:         "https://old",
+			Title:          "Old Title",
+			DisplayAt:      strPtr("2026-01-01T00:00:00Z"),
+			InlineManifest: json.RawMessage(`{"refVersion":"0.1.0"}`),
+			ContentRating:  ratingPtr(contentrating.RatingMature),
+			ContentReasons: &reasons,
+		}
+		if err := json.Unmarshal([]byte(`{"source":"https://new"}`), &it); err != nil {
+			t.Fatal(err)
+		}
+		if it.Source != "https://new" {
+			t.Fatalf("source: %q", it.Source)
+		}
+		if it.Title != "Old Title" {
+			t.Fatalf("title must survive an omitted member, got %q", it.Title)
+		}
+		if it.DisplayAt == nil || *it.DisplayAt != "2026-01-01T00:00:00Z" {
+			t.Fatalf("displayAt: %v", it.DisplayAt)
+		}
+		if len(it.InlineManifest) == 0 {
+			t.Fatal("inlineManifest must survive an omitted member")
+		}
+		if it.ContentRating == nil || *it.ContentRating != contentrating.RatingMature {
+			t.Fatalf("contentRating must survive an omitted member, got %v", it.ContentRating)
+		}
+		if it.ContentReasons == nil || len(*it.ContentReasons) != 1 {
+			t.Fatalf("contentReasons must survive an omitted member, got %v", it.ContentReasons)
+		}
+	})
+
+	t.Run("null document is a no-op", func(t *testing.T) {
+		t.Parallel()
+		it := PlaylistItem{Source: "https://old", Title: "Old Title"}
+		if err := json.Unmarshal([]byte(`null`), &it); err != nil {
+			t.Fatal(err)
+		}
+		if it.Source != "https://old" || it.Title != "Old Title" {
+			t.Fatalf("null must leave the item untouched, got %+v", it)
+		}
+	})
+
+	t.Run("present members replace, including clearing ones", func(t *testing.T) {
+		t.Parallel()
+		reasons := []string{"nudity"}
+		it := PlaylistItem{
+			Source:         "https://old",
+			ContentRating:  ratingPtr(contentrating.RatingMature),
+			ContentReasons: &reasons,
+		}
+		// A present null clears; so does a value that cannot be typed, on this tolerant path.
+		if err := json.Unmarshal([]byte(`{"contentRating":null,"contentReasons":1}`), &it); err != nil {
+			t.Fatal(err)
+		}
+		if it.ContentRating != nil {
+			t.Fatalf("present null must clear the rating, got %q", *it.ContentRating)
+		}
+		if it.ContentReasons != nil {
+			t.Fatalf("an untypeable present member must clear the reasons, got %v", *it.ContentReasons)
+		}
+		if it.Source != "https://old" {
+			t.Fatalf("source must survive, got %q", it.Source)
+		}
+	})
+
+	t.Run("reused slice element keeps its fields", func(t *testing.T) {
+		t.Parallel()
+		p := Playlist{Items: []PlaylistItem{{Source: "https://old", Title: "Kept"}}}
+		if err := json.Unmarshal([]byte(`{"items":[{"source":"https://new"}]}`), &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Items[0].Source != "https://new" || p.Items[0].Title != "Kept" {
+			t.Fatalf("json reuses the backing array; got %+v", p.Items[0])
+		}
+	})
+}
