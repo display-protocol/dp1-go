@@ -14,14 +14,19 @@ import (
 )
 
 const (
-	playlistSchemaURL                           = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
-	playlistItemSchemaURL                       = playlistSchemaURL + "#/$defs/PlaylistItem"
-	playlistGroupSchemaURL                      = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
-	refManifestSchemaURL                        = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
-	channelsExtensionSchemaURL                  = "https://dp1.feralfile.com/extensions/channels/v1.0.0/schema.json"
-	playlistsExtensionSchemaURL                 = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/schema.json"
-	playlistWithPlaylistsExtensionSchemaURL     = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_with_extension.json"
-	playlistItemWithPlaylistsExtensionSchemaURL = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_item_with_extension.json"
+	playlistSchemaURL                                            = "https://dp1.feralfile.com/schemas/v1.1.0/playlist.json"
+	playlistItemSchemaURL                                        = playlistSchemaURL + "#/$defs/PlaylistItem"
+	playlistGroupSchemaURL                                       = "https://dp1.feralfile.com/schemas/v1.1.0/playlist-group.json"
+	refManifestSchemaURL                                         = "https://dp1.feralfile.com/schemas/v1.1.0/ref-manifest.json"
+	channelsExtensionSchemaURL                                   = "https://dp1.feralfile.com/extensions/channels/v1.0.0/schema.json"
+	playlistsExtensionSchemaURL                                  = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/schema.json"
+	playlistWithPlaylistsExtensionSchemaURL                      = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_with_extension.json"
+	playlistItemWithPlaylistsExtensionSchemaURL                  = "https://dp1.feralfile.com/extensions/playlists/v0.2.0/playlist_item_with_extension.json"
+	contentRatingExtensionSchemaURL                              = "https://dp1.feralfile.com/extensions/content-rating/v0.1.0/schema.json"
+	playlistWithContentRatingExtensionSchemaURL                  = "https://dp1.feralfile.com/extensions/content-rating/v0.1.0/playlist_with_extension.json"
+	playlistItemWithContentRatingExtensionSchemaURL              = "https://dp1.feralfile.com/extensions/content-rating/v0.1.0/playlist_item_with_extension.json"
+	playlistWithPlaylistsAndContentRatingExtensionsSchemaURL     = "https://dp1.feralfile.com/extensions/content-rating/v0.1.0/playlist_with_playlists_extension.json"
+	playlistItemWithPlaylistsAndContentRatingExtensionsSchemaURL = "https://dp1.feralfile.com/extensions/content-rating/v0.1.0/playlist_item_with_playlists_extension.json"
 )
 
 var (
@@ -129,6 +134,26 @@ func PlaylistItemWithPlaylistsExtension(data []byte) error {
 // playlists extension schema (bundled core + extension fragment; see playlist_with_extension.json).
 func PlaylistWithPlaylistsExtension(data []byte) error {
 	return validateAgainst(playlistWithPlaylistsExtensionSchemaURL, data)
+}
+
+func ContentRatingExtensionFragment(data []byte) error {
+	return validateAgainst(contentRatingExtensionSchemaURL, data)
+}
+
+func PlaylistWithContentRatingExtension(data []byte) error {
+	return validateAgainst(playlistWithContentRatingExtensionSchemaURL, data)
+}
+
+func PlaylistItemWithContentRatingExtension(data []byte) error {
+	return validateAgainst(playlistItemWithContentRatingExtensionSchemaURL, data)
+}
+
+func PlaylistWithPlaylistsAndContentRatingExtensions(data []byte) error {
+	return validateAgainst(playlistWithPlaylistsAndContentRatingExtensionsSchemaURL, data)
+}
+
+func PlaylistItemWithPlaylistsAndContentRatingExtensions(data []byte) error {
+	return validateAgainst(playlistItemWithPlaylistsAndContentRatingExtensionsSchemaURL, data)
 }
 
 // PlaylistGroup validates a DP-1 playlist-group (exhibition) document.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/refmanifest"
@@ -79,6 +80,120 @@ type PlaylistItem struct {
 	// Precedence when both are present: defaults → inlineManifest → ref → item-local, i.e. a
 	// fetched Ref manifest wins and the inline copy is the offline/degraded fallback.
 	InlineManifest json.RawMessage `json:"inlineManifest,omitempty"`
+
+	// ContentRating and ContentReasons are draft content-rating extension fields.
+	//
+	// Nil ContentRating means the field was absent, i.e. unrated. So, for a consumer, does a
+	// rating this SDK version does not define: the wire vocabulary is open (extension §3.3), any
+	// string is a valid rating, and nothing is assumed from a label the consumer does not
+	// recognize — only "mature" hides anything. Check contentrating.Rating.Known before acting on
+	// a value. Present null and non-string values are invalid and are rejected by the
+	// content-rating-aware parsers.
+	//
+	// Parse with a content-rating-aware helper before acting on either field.
+	//
+	// Both are typed rather than raw, so UnmarshalJSON decodes them leniently — see the comment
+	// there for why a typed extension field would otherwise break the core-only parser.
+	ContentRating *contentrating.Rating `json:"contentRating,omitempty"`
+	// Pointer-to-slice preserves absent versus a present empty array across decode/marshal.
+	ContentReasons *[]string `json:"contentReasons,omitempty"`
+}
+
+// UnmarshalJSON decodes an item, tolerating content-rating members whose JSON type does not fit
+// the typed fields.
+//
+// Core DP-1 and the playlists extension both permit item properties they do not describe, so
+// ParseAndValidatePlaylist accepts a document carrying `"contentRating": 1`. With a plain typed
+// field, the decode step that follows schema validation would then fail on a document the schema
+// had just accepted, and a consumer that never opted into this draft extension could no longer
+// read the playlist at all. That is the same schema/decode mismatch InlineManifest avoids by
+// staying raw; these fields stay typed for the consumers that do implement the extension, and
+// pay for it here instead.
+//
+// A member that does not fit is left nil — the same "absent, therefore unrated" state a
+// core-only consumer would have seen before this extension existed. This is not a silent failure
+// on the path that matters: ParseAndValidatePlaylistWithContentRatingExtension and its combined
+// sibling validate against the extension schema *before* decoding, so a rating of the wrong JSON
+// type is rejected loudly there and can never reach this leniency. Only the parsers that never
+// checked the field in the first place see it.
+//
+// This tolerance is about JSON type only, never about vocabulary. Rating is a string type with
+// no enumeration, so every rating string decodes here — including one from a later vocabulary —
+// and re-encodes unchanged.
+//
+// Note the round-trip consequence, which therefore reaches only values the spec already calls
+// invalid: re-encoding an item whose rating was null or a non-string drops that member and
+// changes the JCS payload. Sign and verify the original bytes, as DP-1 §7.1 requires, not a
+// re-encode.
+func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
+	// Local type to strip this method, or json.Unmarshal would call it again. The outer raw
+	// fields shadow the embedded typed ones: encoding/json prefers the shallower field.
+	type item PlaylistItem
+
+	// Seed the shadow from the receiver rather than starting zero. encoding/json merges into a
+	// struct — it writes only the members the document carries and leaves the rest alone — and
+	// callers rely on that: decoding into a reused variable, and decoding a playlist whose Items
+	// slice already has elements, since json reuses the existing backing array. Starting from a
+	// zero value would silently clear Title, DisplayAt, InlineManifest and the rest on a partial
+	// document, and would blank the item outright on a literal null, which json treats as a no-op.
+	// The two raw fields are also a sink: encoding/json falls back to a case-insensitive key
+	// match, so without them a member spelled "ContentRating" would land in the embedded typed
+	// field. Their values are deliberately not used — see the exact-key lookup below.
+	shadow := struct {
+		item
+		ContentRating  json.RawMessage `json:"contentRating"`
+		ContentReasons json.RawMessage `json:"contentReasons"`
+	}{item: item(*it)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	*it = PlaylistItem(shadow.item)
+
+	// Take both members by exact JSON key rather than from the shadow fields.
+	//
+	// JSON member names are case-sensitive and the item schemas permit properties they do not
+	// describe, so `{"contentRating":"mature","ContentRating":"general"}` validates as mature —
+	// the second member is merely an unknown property. encoding/json's case-insensitive fallback
+	// would nonetheless match the second key to the field and materialize "general", handing a
+	// content-policy consumer a rating the signed document does not carry and admitting mature
+	// work as general. Exact lookup keeps the decoded value equal to the validated one, which is
+	// the SDK's validate-before-decode contract, and is worth the extra pass over the item for
+	// the one field that gates whether something is shown.
+	//
+	// A key that is absent leaves the seeded value alone; a key that is present replaces it,
+	// including a present null or an untypeable value, which clear it.
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		// Not an object (a literal null reaches here as a nil map, not an error). The shadow
+		// decode above already rejected anything that is not a valid item, so there is nothing
+		// further to take.
+		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+
+	if raw, ok := members["contentRating"]; ok {
+		it.ContentRating = nil
+		if string(raw) != "null" {
+			var rating contentrating.Rating
+			if json.Unmarshal(raw, &rating) == nil {
+				it.ContentRating = &rating
+			}
+		}
+	}
+	if raw, ok := members["contentReasons"]; ok {
+		it.ContentReasons = nil
+		if string(raw) != "null" {
+			var reasons []string
+			if json.Unmarshal(raw, &reasons) == nil {
+				if reasons == nil {
+					// Defensive: only "null" decodes to nil, and it is excluded above. Keep the
+					// present-versus-present-empty distinction the pointer-to-slice exists for.
+					reasons = []string{}
+				}
+				it.ContentReasons = &reasons
+			}
+		}
+	}
+	return nil
 }
 
 // ParseInlineManifest decodes the item's inline Ref Manifest (§3.6).

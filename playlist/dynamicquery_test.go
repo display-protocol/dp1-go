@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 	"github.com/display-protocol/dp1-go/internal/validate"
@@ -29,6 +30,28 @@ func (errReadCloser) Close() error               { return nil }
 
 // testDynamicQueryInsecure opts into HTTP and non-public hosts for httptest servers.
 var testDynamicQueryInsecure = &DynamicQueryFetchOptions{AllowInsecureHTTP: true}
+
+func TestDynamicQueryContentRatingValidation(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":"general","contentReasons":["curator advisory"]}]}`), dq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ContentRating == nil || string(*items[0].ContentRating) != "general" {
+		t.Fatalf("items: %+v", items)
+	}
+	_, err = playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":null}]}`), dq)
+	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
+		t.Fatalf("expected invalid item, got %v", err)
+	}
+}
 
 func assertErrDynamicQueryEndpointPolicy(t *testing.T, err error) {
 	t.Helper()
@@ -1004,6 +1027,8 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 				DisplayAt:      strPtr("2026-07-21T00:00:00Z"),
 				Override:       json.RawMessage(`{"display":{"scaling":"fill"}}`),
 				InlineManifest: json.RawMessage(`{"refVersion":"0.1.0","id":"r","created":"2026-07-28T00:00:00Z","locale":"en"}`),
+				ContentRating:  ratingPtr(contentrating.RatingMature),
+				ContentReasons: &[]string{"nudity"},
 			},
 		},
 		Signatures: []Signature{{Alg: AlgEd25519, Kid: "k", Ts: "t", PayloadHash: "h", Role: RoleCurator, Sig: "s"}},
@@ -1039,6 +1064,22 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	if *orig.Items[0].DisplayAt != "2026-07-21T00:00:00Z" {
 		t.Fatal("mutating cloned displayAt must not change original")
 	}
+	// Content-rating fields are pointers, so a shallow copy would let a consumer's policy pass
+	// rewrite the rating on the playlist it was handed.
+	if out.Items[0].ContentRating == nil || out.Items[0].ContentRating == orig.Items[0].ContentRating {
+		t.Fatal("expected cloned item contentRating pointer")
+	}
+	*out.Items[0].ContentRating = contentrating.RatingGeneral
+	if *orig.Items[0].ContentRating != contentrating.RatingMature {
+		t.Fatal("mutating cloned contentRating must not change original")
+	}
+	if out.Items[0].ContentReasons == nil || out.Items[0].ContentReasons == orig.Items[0].ContentReasons {
+		t.Fatal("expected cloned item contentReasons pointer")
+	}
+	(*out.Items[0].ContentReasons)[0] = "flashing imagery"
+	if (*orig.Items[0].ContentReasons)[0] != "nudity" {
+		t.Fatal("mutating cloned contentReasons must not change original")
+	}
 	if len(out.Signatures) != len(orig.Signatures) || &out.Signatures[0] == &orig.Signatures[0] {
 		t.Fatal("expected cloned signatures slice")
 	}
@@ -1062,6 +1103,46 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 	if len(out.Items) != 2 {
 		t.Fatalf("items %+v", out.Items)
+	}
+}
+
+// A present-empty contentReasons must survive resolve + re-serialize as `[]`, not `null`.
+// clonePlaylist runs on every ResolveDynamicQuery call including the no-dynamicQuery path, so a
+// clone that collapsed present-empty to nil would turn a valid rated playlist into one the
+// extension schema rejects, and would change the signed JCS payload on the way through.
+func TestResolveDynamicQuery_clonePreservesPresentEmptyContentReasons(t *testing.T) {
+	t.Parallel()
+	orig := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items: []PlaylistItem{{
+			Source:         "https://static",
+			ContentRating:  ratingPtr(contentrating.RatingGeneral),
+			ContentReasons: &[]string{},
+		}},
+	}
+	out, err := orig.ResolveDynamicQuery(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Items[0].ContentReasons == nil {
+		t.Fatal("expected contentReasons to stay present")
+	}
+	if *out.Items[0].ContentReasons == nil {
+		t.Fatal("expected a non-nil empty slice, not a pointer to nil")
+	}
+	if len(*out.Items[0].ContentReasons) != 0 {
+		t.Fatalf("reasons: %+v", *out.Items[0].ContentReasons)
+	}
+	encoded, err := json.Marshal(out.Items[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"contentReasons":[]`) {
+		t.Fatalf("want contentReasons:[] in %s", encoded)
+	}
+	if err := validate.PlaylistItemWithPlaylistsAndContentRatingExtensions(encoded); err != nil {
+		t.Fatalf("re-serialized item must stay schema-valid: %v", err)
 	}
 }
 
@@ -1194,6 +1275,46 @@ func TestResolveDynamicQuery_malformedInlineManifestFailsValidation(t *testing.T
 			}
 			if !errors.Is(err, validate.ErrValidation) {
 				t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
+			}
+		})
+	}
+}
+
+// The dynamic-query path validates each mapped item and then decodes it, so it inherits the same
+// exact-key requirement: a case-variant member must not become the rating the consumer acts on.
+// An indexer response is the least trusted input in the SDK, which is where this matters most.
+func TestDynamicQueryContentRatingIgnoresCaseVariantMembers(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	for _, tc := range []struct {
+		name string
+		item string
+		want string // "" means the rating must be absent
+	}{
+		{"exact wins", `{"source":"https://a","contentRating":"mature","ContentRating":"general"}`, "mature"},
+		{"capitalized alone", `{"source":"https://a","ContentRating":"general"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[`+tc.item+`]}`), dq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := items[0].ContentRating
+			if tc.want == "" {
+				if got != nil {
+					t.Fatalf("want no rating, got %q", *got)
+				}
+				return
+			}
+			if got == nil || string(*got) != tc.want {
+				t.Fatalf("want %q, got %v", tc.want, got)
 			}
 		})
 	}

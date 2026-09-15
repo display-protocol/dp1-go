@@ -349,6 +349,59 @@ func TestPlaylistWithPlaylistsExtension_displayAtValidationFailures(t *testing.T
 	}
 }
 
+func TestContentRatingExtension(t *testing.T) {
+	t.Parallel()
+	valid := []string{
+		`{"source":"https://example.com/a"}`,
+		`{"source":"https://example.com/a","contentRating":"general"}`,
+		`{"source":"https://example.com/a","contentRating":"mature","contentReasons":[]}`,
+		`{"source":"https://example.com/a","contentReasons":["nudity","flashing imagery"]}`,
+		// Open vocabulary (§3.3): the schema constrains the JSON type, not the value. A rating
+		// this SDK version does not define validates and is read as unrated.
+		`{"source":"https://example.com/a","contentRating":"unrated"}`,
+		`{"source":"https://example.com/a","contentRating":"adults-only","contentReasons":["language"]}`,
+		`{"source":"https://example.com/a","contentRating":""}`,
+	}
+	for _, item := range valid {
+		if err := PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)); err != nil {
+			t.Fatalf("valid item %s: %v", item, err)
+		}
+	}
+	invalid := []string{
+		`{"source":"https://example.com/a","contentRating":null}`,
+		`{"source":"https://example.com/a","contentRating":1}`,
+		`{"source":"https://example.com/a","contentRating":true}`,
+		`{"source":"https://example.com/a","contentRating":["mature"]}`,
+		`{"source":"https://example.com/a","contentReasons":null}`,
+		`{"source":"https://example.com/a","contentReasons":[""]}`,
+		`{"source":"https://example.com/a","contentReasons":"nudity"}`,
+	}
+	for _, item := range invalid {
+		assertErrValidation(t, PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)))
+	}
+
+	// The content-rating-only item validator must agree with the combined one on every case
+	// above. Both composed files reference the same $defs/PlaylistItemExtension overlay, so a
+	// disagreement here means one of them stopped pointing at it and the two validation paths
+	// have drifted.
+	for _, item := range valid {
+		if err := PlaylistItemWithContentRatingExtension([]byte(item)); err != nil {
+			t.Fatalf("valid item %s (content-rating only): %v", item, err)
+		}
+	}
+	for _, item := range invalid {
+		assertErrValidation(t, PlaylistItemWithContentRatingExtension([]byte(item)))
+	}
+
+	doc := fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":"general"}],%s}`, playlistSigBlock)
+	if err := PlaylistWithContentRatingExtension([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PlaylistWithPlaylistsAndContentRatingExtensions([]byte(doc)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidators_minimalValid(t *testing.T) {
 	t.Parallel()
 	playlistCore := []byte(`{

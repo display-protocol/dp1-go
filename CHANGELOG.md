@@ -3,6 +3,68 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased
+
+- Add draft content-rating extension types, embedded schemas, and parse helpers. `contentRating`
+  is an optional per-item label; absence is unrated. Optional `contentReasons` are nonempty
+  open-vocabulary strings.
+- **The rating vocabulary is open** ([spec §3.3](https://github.com/display-protocol/dp1/pull/52)):
+  any string is a valid rating, `v0.1.0` defines only `general` and `mature`, and a value the
+  consumer does not recognize means unrated — nothing is assumed from an unknown label, so only
+  `mature` hides anything. `contentrating.Rating` stays a string type with those two constants;
+  use the new `Rating.Known()` to branch on the values this SDK version defines, never to decide
+  whether a document is valid. `null` and non-string values remain schema-invalid.
+- Dynamic-query items now use the combined playlists + content-rating validator, rejecting
+  ratings of the wrong JSON type and malformed reasons while preserving unrated and
+  unrecognized-rating items.
+- Reserve `contentBlocked` for valid items excluded by consumer policy. Invalid metadata remains
+  `playlistInvalid`. Existing JCS/signature behavior is unchanged; extension fields are signed.
+
+### Source compatibility
+
+`playlist.PlaylistItem` gains two exported fields (`ContentRating`, `ContentReasons`). No existing
+field is removed or retyped, so keyed literals, field access, and JSON round-trips are unaffected.
+An **unkeyed** composite literal — `playlist.PlaylistItem{"https://a", …}` — must supply every
+field positionally and will fail to compile; migrate it to a keyed literal, which `go vet`'s
+`composites` check already recommends for a struct from another package. This matches how v0.6.0
+handled adding `InlineManifest` to the same struct (listed under Added, not under the breaking
+section, which was reserved for the `Thumbnail.W`/`.H` retype).
+
+### Parser tolerance
+
+`playlist.PlaylistItem` now has an `UnmarshalJSON` that decodes the two content-rating members
+leniently. Core DP-1 and the playlists extension both permit item properties they do not
+describe, so `ParseAndValidatePlaylist` accepts a document carrying `"contentRating": 1`; with a
+plain typed field the decode step that follows schema validation would then fail on a document
+the schema had just accepted, locking a consumer that never opted into this draft extension out
+of the playlist entirely. A member whose JSON type does not fit is left nil — the same "absent,
+therefore unrated" state that consumer saw before the extension existed.
+
+This is not leniency on the paths that implement the extension:
+`ParseAndValidatePlaylistWithContentRatingExtension` and its combined sibling validate against
+the extension schema *before* decoding, so a rating of the wrong JSON type is rejected there and
+never reaches the tolerant decode.
+
+Note this tolerance is only about JSON *type*, never about vocabulary. Every rating string —
+including one this SDK version does not define — decodes and re-encodes byte-identically on every
+parse path, so relaying a document with an unfamiliar rating leaves the JCS payload and the
+signature over it intact. Only a value the spec already calls invalid (`null`, or a non-string)
+is dropped on re-encode, and then only by the parsers that never validated the field. Sign and
+verify the original bytes, per §7.1, not a re-encode.
+
+Both members are taken by **exact JSON key**. Member names are case-sensitive and the item
+schemas permit properties they do not describe, so `{"contentRating":"mature","ContentRating":
+"general"}` validates as mature — the capitalized member is merely an unknown property.
+`encoding/json`'s case-insensitive key fallback would otherwise match it to the field and report
+`general`, admitting mature work as general despite the signed rating. Exact lookup keeps the
+decoded value equal to the validated one. This is specific to the two content-rating members,
+because they gate whether an item is shown; every other field still matches case-insensitively,
+which is `encoding/json`'s behavior throughout this SDK.
+
+Note that `note` and `displayAt` — the typed playlists-extension fields shipped through v0.6.1 —
+still have the untolerated behavior on the core-only path; only `inlineManifest` (raw) and now
+the content-rating members avoid it. Making those two consistent is a separate change.
+
 ## v0.6.1 — 2026-09-14
 
 Aligns the SDK with the artist profile added to the Ref Manifest in

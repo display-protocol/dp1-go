@@ -14,12 +14,24 @@ import (
 // The following hooks default to the real JSON Schema validators. Tests may replace them briefly
 // to exercise JSON decode error paths. Do not reassign concurrently in production.
 var (
-	PlaylistCoreSchemaValidate                   = validate.Playlist
-	PlaylistWithPlaylistsExtensionSchemaValidate = validate.PlaylistWithPlaylistsExtension
-	PlaylistGroupSchemaValidate                  = validate.PlaylistGroup
-	RefManifestSchemaValidate                    = validate.RefManifest
-	ChannelExtensionSchemaValidate               = validate.ChannelsExtension
+	PlaylistCoreSchemaValidate                                    = validate.Playlist
+	PlaylistWithPlaylistsExtensionSchemaValidate                  = validate.PlaylistWithPlaylistsExtension
+	PlaylistWithContentRatingExtensionSchemaValidate              = validate.PlaylistWithContentRatingExtension
+	PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate = validate.PlaylistWithPlaylistsAndContentRatingExtensions
+	PlaylistGroupSchemaValidate                                   = validate.PlaylistGroup
+	RefManifestSchemaValidate                                     = validate.RefManifest
+	ChannelExtensionSchemaValidate                                = validate.ChannelsExtension
 )
+
+// ValidateContentRatingExtension validates only the draft content-rating overlay.
+// It accepts a partial/full playlist without requiring core fields or signatures, making it
+// suitable for legacy ingestion boundaries that cannot yet require a signed DP-1 document.
+func ValidateContentRatingExtension(data []byte) error {
+	if err := validate.ContentRatingExtensionFragment(data); err != nil {
+		return CodeFromPlaylistValidation(err)
+	}
+	return nil
+}
 
 // ParseAndValidatePlaylist validates against the core playlist schema and decodes into playlist.Playlist.
 //
@@ -41,6 +53,30 @@ func ParseAndValidatePlaylist(data []byte) (*playlist.Playlist, error) {
 // ParseAndValidatePlaylistWithPlaylistsExtension validates against the composed playlists extension schema (core bundle + extension fragment).
 func ParseAndValidatePlaylistWithPlaylistsExtension(data []byte) (*playlist.Playlist, error) {
 	if err := PlaylistWithPlaylistsExtensionSchemaValidate(data); err != nil {
+		return nil, CodeFromPlaylistValidation(err)
+	}
+	var p playlist.Playlist
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, WithCode(CodePlaylistInvalid, fmt.Errorf("dp1: decode playlist: %w", err))
+	}
+	return &p, nil
+}
+
+// ParseAndValidatePlaylistWithContentRatingExtension validates core plus the draft content-rating extension.
+func ParseAndValidatePlaylistWithContentRatingExtension(data []byte) (*playlist.Playlist, error) {
+	if err := PlaylistWithContentRatingExtensionSchemaValidate(data); err != nil {
+		return nil, CodeFromPlaylistValidation(err)
+	}
+	var p playlist.Playlist
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, WithCode(CodePlaylistInvalid, fmt.Errorf("dp1: decode playlist: %w", err))
+	}
+	return &p, nil
+}
+
+// ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions validates both draft overlays.
+func ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(data []byte) (*playlist.Playlist, error) {
+	if err := PlaylistWithPlaylistsAndContentRatingExtensionsSchemaValidate(data); err != nil {
 		return nil, CodeFromPlaylistValidation(err)
 	}
 	var p playlist.Playlist
