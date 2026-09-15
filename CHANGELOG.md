@@ -52,6 +52,15 @@ signature over it intact. Only a value the spec already calls invalid (`null`, o
 is dropped on re-encode, and then only by the parsers that never validated the field. Sign and
 verify the original bytes, per §7.1, not a re-encode.
 
+Both members are taken by **exact JSON key**. Member names are case-sensitive and the item
+schemas permit properties they do not describe, so `{"contentRating":"mature","ContentRating":
+"general"}` validates as mature — the capitalized member is merely an unknown property.
+`encoding/json`'s case-insensitive key fallback would otherwise match it to the field and report
+`general`, admitting mature work as general despite the signed rating. Exact lookup keeps the
+decoded value equal to the validated one. This is specific to the two content-rating members,
+because they gate whether an item is shown; every other field still matches case-insensitively,
+which is `encoding/json`'s behavior throughout this SDK.
+
 Note that `note` and `displayAt` — the typed playlists-extension fields shipped through v0.6.1 —
 still have the untolerated behavior on the core-only path; only `inlineManifest` (raw) and now
 the content-rating members avoid it. Making those two consistent is a separate change.

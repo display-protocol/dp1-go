@@ -893,3 +893,60 @@ func TestInlineManifest_survivesStructRoundTripForSigning(t *testing.T) {
 		t.Fatalf("round-tripped document must still verify: ok=%v failed=%+v err=%v", ok, failed, err)
 	}
 }
+
+// JSON member names are case-sensitive and the item schemas permit properties they do not
+// describe, so `{"contentRating":"mature","ContentRating":"general"}` validates as mature — the
+// capitalized member is merely an unknown property. encoding/json's case-insensitive key fallback
+// would otherwise match it to the field and hand the consumer "general", admitting mature work as
+// general despite the signed rating. The decoded value must equal the validated one.
+func TestContentRatingIgnoresCaseVariantMembers(t *testing.T) {
+	t.Parallel()
+	const sigBlock = `"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK","ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]`
+	for _, tc := range []struct {
+		name string
+		item string
+		want string // "" means the rating must be absent
+	}{
+		{"exact wins over capitalized", `"source":"https://a","contentRating":"mature","ContentRating":"general"`, "mature"},
+		{"capitalized alone is not a rating", `"source":"https://a","ContentRating":"general"`, ""},
+		{"upper alone is not a rating", `"source":"https://a","CONTENTRATING":"general"`, ""},
+		{"lower alone is not a rating", `"source":"https://a","contentrating":"general"`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"dpVersion":"1.1.0","title":"x","items":[{` + tc.item + `}],` + sigBlock + `}`)
+			for name, parse := range map[string]func([]byte) (*playlist.Playlist, error){
+				"core":                     dp1.ParseAndValidatePlaylist,
+				"playlists":                dp1.ParseAndValidatePlaylistWithPlaylistsExtension,
+				"content-rating":           dp1.ParseAndValidatePlaylistWithContentRatingExtension,
+				"playlists+content-rating": dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions,
+			} {
+				out, err := parse(doc)
+				if err != nil {
+					t.Fatalf("%s parser: %v", name, err)
+				}
+				got := out.Items[0].ContentRating
+				if tc.want == "" {
+					if got != nil {
+						t.Fatalf("%s parser: want no rating, got %q", name, *got)
+					}
+					continue
+				}
+				if got == nil || string(*got) != tc.want {
+					t.Fatalf("%s parser: want %q, got %v", name, tc.want, got)
+				}
+			}
+		})
+	}
+
+	// contentReasons takes the same exact-key treatment.
+	doc := []byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentReasons":["nudity"],"ContentReasons":["language"]}],` + sigBlock + `}`)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Items[0].ContentReasons == nil || len(*out.Items[0].ContentReasons) != 1 ||
+		(*out.Items[0].ContentReasons)[0] != "nudity" {
+		t.Fatalf("reasons: %v", out.Items[0].ContentReasons)
+	}
+}

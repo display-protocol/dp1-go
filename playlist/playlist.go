@@ -136,6 +136,9 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 	// slice already has elements, since json reuses the existing backing array. Starting from a
 	// zero value would silently clear Title, DisplayAt, InlineManifest and the rest on a partial
 	// document, and would blank the item outright on a literal null, which json treats as a no-op.
+	// The two raw fields are also a sink: encoding/json falls back to a case-insensitive key
+	// match, so without them a member spelled "ContentRating" would land in the embedded typed
+	// field. Their values are deliberately not used — see the exact-key lookup below.
 	shadow := struct {
 		item
 		ContentRating  json.RawMessage `json:"contentRating"`
@@ -146,10 +149,28 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 	}
 	*it = PlaylistItem(shadow.item)
 
-	// A nil raw member means the document did not carry it, so the seeded value stands. Only a
-	// member that is actually present replaces what the receiver already held — including a
-	// present null or an untypeable value, which clear it.
-	if raw := shadow.ContentRating; raw != nil {
+	// Take both members by exact JSON key rather than from the shadow fields.
+	//
+	// JSON member names are case-sensitive and the item schemas permit properties they do not
+	// describe, so `{"contentRating":"mature","ContentRating":"general"}` validates as mature —
+	// the second member is merely an unknown property. encoding/json's case-insensitive fallback
+	// would nonetheless match the second key to the field and materialize "general", handing a
+	// content-policy consumer a rating the signed document does not carry and admitting mature
+	// work as general. Exact lookup keeps the decoded value equal to the validated one, which is
+	// the SDK's validate-before-decode contract, and is worth the extra pass over the item for
+	// the one field that gates whether something is shown.
+	//
+	// A key that is absent leaves the seeded value alone; a key that is present replaces it,
+	// including a present null or an untypeable value, which clear it.
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		// Not an object (a literal null reaches here as a nil map, not an error). The shadow
+		// decode above already rejected anything that is not a valid item, so there is nothing
+		// further to take.
+		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+
+	if raw, ok := members["contentRating"]; ok {
 		it.ContentRating = nil
 		if string(raw) != "null" {
 			var rating contentrating.Rating
@@ -158,7 +179,7 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
-	if raw := shadow.ContentReasons; raw != nil {
+	if raw, ok := members["contentReasons"]; ok {
 		it.ContentReasons = nil
 		if string(raw) != "null" {
 			var reasons []string

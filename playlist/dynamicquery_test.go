@@ -1279,3 +1279,43 @@ func TestResolveDynamicQuery_malformedInlineManifestFailsValidation(t *testing.T
 		})
 	}
 }
+
+// The dynamic-query path validates each mapped item and then decodes it, so it inherits the same
+// exact-key requirement: a case-variant member must not become the rating the consumer acts on.
+// An indexer response is the least trusted input in the SDK, which is where this matters most.
+func TestDynamicQueryContentRatingIgnoresCaseVariantMembers(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	for _, tc := range []struct {
+		name string
+		item string
+		want string // "" means the rating must be absent
+	}{
+		{"exact wins", `{"source":"https://a","contentRating":"mature","ContentRating":"general"}`, "mature"},
+		{"capitalized alone", `{"source":"https://a","ContentRating":"general"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[`+tc.item+`]}`), dq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := items[0].ContentRating
+			if tc.want == "" {
+				if got != nil {
+					t.Fatalf("want no rating, got %q", *got)
+				}
+				return
+			}
+			if got == nil || string(*got) != tc.want {
+				t.Fatalf("want %q, got %v", tc.want, got)
+			}
+		})
+	}
+}
