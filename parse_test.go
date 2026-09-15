@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -255,14 +256,18 @@ func TestContentRatingToleratedByNonAwareParsers(t *testing.T) {
 }
 
 // The leniency above must not reach the parsers that do implement the extension: those validate
-// against the schema before decoding, so a malformed rating is rejected there rather than
-// silently flattened to nil.
+// against the schema before decoding, so a rating of the wrong JSON *type* is rejected there
+// rather than silently flattened to nil.
+//
+// An unrecognized rating *string* is a separate matter and is not listed here: the wire
+// vocabulary is open (§3.3), so a value this SDK does not define is valid and is treated as
+// unrated. TestUnknownRatingIsAcceptedEverywhere covers it.
 func TestContentRatingLeniencyDoesNotReachAwareParsers(t *testing.T) {
 	t.Parallel()
 	const sigBlock = `"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK","ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]`
 	for _, item := range []string{
 		`"source":"https://a","contentRating":1`,
-		`"source":"https://a","contentRating":"adults-only"`,
+		`"source":"https://a","contentRating":true`,
 		`"source":"https://a","contentReasons":"nudity"`,
 		`"source":"https://a","contentReasons":[1,2]`,
 		`"source":"https://a","contentRating":null`,
@@ -273,6 +278,71 @@ func TestContentRatingLeniencyDoesNotReachAwareParsers(t *testing.T) {
 		}
 		if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(doc); err == nil {
 			t.Fatalf("combined parser must reject %s", item)
+		}
+	}
+}
+
+// Product decision recorded in display-protocol/dp1#52 (§3.3): the wire vocabulary is open, so a
+// rating string this SDK version does not define is valid everywhere, decodes, and means unrated.
+// Nothing is assumed from a label the consumer does not know — only "mature" hides anything — so
+// a future vocabulary must never cost an item its playability or strand it at a parser.
+func TestUnknownRatingIsAcceptedEverywhere(t *testing.T) {
+	t.Parallel()
+	const sigBlock = `"signatures":[{"alg":"ed25519","kid":"did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK","ts":"2025-01-01T00:00:00Z","payload_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"curator","sig":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]`
+	for _, unknown := range []string{"adults-only", "teen", "", "GENERAL"} {
+		doc := []byte(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","contentRating":` +
+			strconv.Quote(unknown) + `}],` + sigBlock + `}`)
+
+		for name, parse := range map[string]func([]byte) (*playlist.Playlist, error){
+			"core":                     dp1.ParseAndValidatePlaylist,
+			"playlists":                dp1.ParseAndValidatePlaylistWithPlaylistsExtension,
+			"content-rating":           dp1.ParseAndValidatePlaylistWithContentRatingExtension,
+			"playlists+content-rating": dp1.ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions,
+		} {
+			out, err := parse(doc)
+			if err != nil {
+				t.Fatalf("%s parser must accept rating %q: %v", name, unknown, err)
+			}
+			got := out.Items[0].ContentRating
+			if got == nil {
+				t.Fatalf("%s parser: rating %q must decode, got nil", name, unknown)
+			}
+			if string(*got) != unknown {
+				t.Fatalf("%s parser: want rating %q, got %q", name, unknown, *got)
+			}
+			if got.Known() {
+				t.Fatalf("%s parser: rating %q must not report as Known", name, unknown)
+			}
+		}
+
+		// The fragment validator is the ingestion boundary and must agree.
+		if err := dp1.ValidateContentRatingExtension([]byte(`{"items":[{"contentRating":` +
+			strconv.Quote(unknown) + `}]}`)); err != nil {
+			t.Fatalf("fragment validator must accept rating %q: %v", unknown, err)
+		}
+	}
+}
+
+// An unknown rating must survive decode and re-encode byte-identically. A consumer that merely
+// relays a document re-encodes it, and dropping or rewriting the label there would change the JCS
+// payload and break the signature over it.
+func TestUnknownRatingRoundTrip(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"source":"https://a","contentRating":"adults-only"}`,
+		`{"source":"https://a","contentRating":"teen","contentReasons":["language"]}`,
+		`{"source":"https://a","contentRating":""}`,
+	} {
+		var item playlist.PlaylistItem
+		if err := json.Unmarshal([]byte(raw), &item); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		got, err := json.Marshal(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != raw {
+			t.Fatalf("round trip changed the document:\n got %s\nwant %s", got, raw)
 		}
 	}
 }
@@ -305,12 +375,18 @@ func TestContentReasonsPresenceRoundTrip(t *testing.T) {
 
 func TestValidateContentRatingExtensionFragment(t *testing.T) {
 	t.Parallel()
-	if err := dp1.ValidateContentRatingExtension([]byte(`{"items":[{"contentRating":"general","contentReasons":[]}]}`)); err != nil {
-		t.Fatal(err)
+	for _, raw := range []string{
+		`{"items":[{"contentRating":"general","contentReasons":[]}]}`,
+		// Open vocabulary (§3.3): an unrecognized rating string is valid, and means unrated.
+		`{"items":[{"contentRating":"unknown"}]}`,
+	} {
+		if err := dp1.ValidateContentRatingExtension([]byte(raw)); err != nil {
+			t.Fatalf("expected valid fragment %s: %v", raw, err)
+		}
 	}
 	for _, raw := range []string{
 		`{"items":[{"contentRating":null}]}`,
-		`{"items":[{"contentRating":"unknown"}]}`,
+		`{"items":[{"contentRating":1}]}`,
 		`{"items":[{"contentReasons":[""]}]}`,
 	} {
 		if err := dp1.ValidateContentRatingExtension([]byte(raw)); err == nil {

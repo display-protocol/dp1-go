@@ -82,8 +82,15 @@ type PlaylistItem struct {
 	InlineManifest json.RawMessage `json:"inlineManifest,omitempty"`
 
 	// ContentRating and ContentReasons are draft content-rating extension fields.
-	// Nil ContentRating means the field was absent (unrated). Parse with a content-rating-aware
-	// helper before acting on either field; present null and malformed values must be rejected.
+	//
+	// Nil ContentRating means the field was absent, i.e. unrated. So, for a consumer, does a
+	// rating this SDK version does not define: the wire vocabulary is open (extension §3.3), any
+	// string is a valid rating, and nothing is assumed from a label the consumer does not
+	// recognize — only "mature" hides anything. Check contentrating.Rating.Known before acting on
+	// a value. Present null and non-string values are invalid and are rejected by the
+	// content-rating-aware parsers.
+	//
+	// Parse with a content-rating-aware helper before acting on either field.
 	//
 	// Both are typed rather than raw, so UnmarshalJSON decodes them leniently — see the comment
 	// there for why a typed extension field would otherwise break the core-only parser.
@@ -106,13 +113,18 @@ type PlaylistItem struct {
 // A member that does not fit is left nil — the same "absent, therefore unrated" state a
 // core-only consumer would have seen before this extension existed. This is not a silent failure
 // on the path that matters: ParseAndValidatePlaylistWithContentRatingExtension and its combined
-// sibling validate against the extension schema *before* decoding, so a malformed rating is
-// rejected loudly there and can never reach this leniency. Only the parsers that never checked
-// the field in the first place see it.
+// sibling validate against the extension schema *before* decoding, so a rating of the wrong JSON
+// type is rejected loudly there and can never reach this leniency. Only the parsers that never
+// checked the field in the first place see it.
 //
-// Note the round-trip consequence: a value that fits is preserved, but re-encoding an item whose
-// rating did not fit drops that member and changes the JCS payload. Sign and verify the original
-// bytes, as DP-1 §7.1 requires, not a re-encode.
+// This tolerance is about JSON type only, never about vocabulary. Rating is a string type with
+// no enumeration, so every rating string decodes here — including one from a later vocabulary —
+// and re-encodes unchanged.
+//
+// Note the round-trip consequence, which therefore reaches only values the spec already calls
+// invalid: re-encoding an item whose rating was null or a non-string drops that member and
+// changes the JCS payload. Sign and verify the original bytes, as DP-1 §7.1 requires, not a
+// re-encode.
 func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 	// Local type to strip this method, or json.Unmarshal would call it again. The outer raw
 	// fields shadow the embedded typed ones: encoding/json prefers the shallower field.

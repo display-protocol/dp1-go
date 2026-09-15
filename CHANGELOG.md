@@ -6,10 +6,17 @@ compatibility; every break is listed here with the migration.
 ## Unreleased
 
 - Add draft content-rating extension types, embedded schemas, and parse helpers. `contentRating`
-  is an optional `general` / `mature` per-item label; absence is unrated. Optional
-  `contentReasons` are nonempty open-vocabulary strings.
+  is an optional per-item label; absence is unrated. Optional `contentReasons` are nonempty
+  open-vocabulary strings.
+- **The rating vocabulary is open** ([spec §3.3](https://github.com/display-protocol/dp1/pull/52)):
+  any string is a valid rating, `v0.1.0` defines only `general` and `mature`, and a value the
+  consumer does not recognize means unrated — nothing is assumed from an unknown label, so only
+  `mature` hides anything. `contentrating.Rating` stays a string type with those two constants;
+  use the new `Rating.Known()` to branch on the values this SDK version defines, never to decide
+  whether a document is valid. `null` and non-string values remain schema-invalid.
 - Dynamic-query items now use the combined playlists + content-rating validator, rejecting
-  malformed present ratings and reasons while preserving unrated items.
+  ratings of the wrong JSON type and malformed reasons while preserving unrated and
+  unrecognized-rating items.
 - Reserve `contentBlocked` for valid items excluded by consumer policy. Invalid metadata remains
   `playlistInvalid`. Existing JCS/signature behavior is unchanged; extension fields are signed.
 
@@ -30,18 +37,20 @@ leniently. Core DP-1 and the playlists extension both permit item properties the
 describe, so `ParseAndValidatePlaylist` accepts a document carrying `"contentRating": 1`; with a
 plain typed field the decode step that follows schema validation would then fail on a document
 the schema had just accepted, locking a consumer that never opted into this draft extension out
-of the playlist entirely. A member that does not fit the typed field is left nil — the same
-"absent, therefore unrated" state that consumer saw before the extension existed. A member that
-does fit still decodes, including a rating string this SDK does not yet know.
+of the playlist entirely. A member whose JSON type does not fit is left nil — the same "absent,
+therefore unrated" state that consumer saw before the extension existed.
 
 This is not leniency on the paths that implement the extension:
 `ParseAndValidatePlaylistWithContentRatingExtension` and its combined sibling validate against
-the extension schema *before* decoding, so a malformed or unknown rating is rejected there and
+the extension schema *before* decoding, so a rating of the wrong JSON type is rejected there and
 never reaches the tolerant decode.
 
-Round-trip consequence: a member that fits is preserved, but re-encoding an item whose rating did
-not fit drops it and changes the JCS payload. Sign and verify the original bytes, per §7.1, not a
-re-encode.
+Note this tolerance is only about JSON *type*, never about vocabulary. Every rating string —
+including one this SDK version does not define — decodes and re-encodes byte-identically on every
+parse path, so relaying a document with an unfamiliar rating leaves the JCS payload and the
+signature over it intact. Only a value the spec already calls invalid (`null`, or a non-string)
+is dropped on re-encode, and then only by the parsers that never validated the field. Sign and
+verify the original bytes, per §7.1, not a re-encode.
 
 Note that `note` and `displayAt` — the typed playlists-extension fields shipped through v0.6.1 —
 still have the untolerated behavior on the core-only path; only `inlineManifest` (raw) and now

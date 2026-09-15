@@ -356,6 +356,11 @@ func TestContentRatingExtension(t *testing.T) {
 		`{"source":"https://example.com/a","contentRating":"general"}`,
 		`{"source":"https://example.com/a","contentRating":"mature","contentReasons":[]}`,
 		`{"source":"https://example.com/a","contentReasons":["nudity","flashing imagery"]}`,
+		// Open vocabulary (§3.3): the schema constrains the JSON type, not the value. A rating
+		// this SDK version does not define validates and is read as unrated.
+		`{"source":"https://example.com/a","contentRating":"unrated"}`,
+		`{"source":"https://example.com/a","contentRating":"adults-only","contentReasons":["language"]}`,
+		`{"source":"https://example.com/a","contentRating":""}`,
 	}
 	for _, item := range valid {
 		if err := PlaylistItemWithPlaylistsAndContentRatingExtensions([]byte(item)); err != nil {
@@ -364,8 +369,9 @@ func TestContentRatingExtension(t *testing.T) {
 	}
 	invalid := []string{
 		`{"source":"https://example.com/a","contentRating":null}`,
-		`{"source":"https://example.com/a","contentRating":"unrated"}`,
 		`{"source":"https://example.com/a","contentRating":1}`,
+		`{"source":"https://example.com/a","contentRating":true}`,
+		`{"source":"https://example.com/a","contentRating":["mature"]}`,
 		`{"source":"https://example.com/a","contentReasons":null}`,
 		`{"source":"https://example.com/a","contentReasons":[""]}`,
 		`{"source":"https://example.com/a","contentReasons":"nudity"}`,

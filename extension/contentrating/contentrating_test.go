@@ -21,6 +21,11 @@ func TestValidatePlaylistFragment(t *testing.T) {
 		`{"items":[{"contentRating":"general"}]}`,
 		`{"items":[{"contentRating":"mature","contentReasons":["nudity"]}]}`,
 		`{"items":[{"contentReasons":[]}]}`,
+		// Open vocabulary (§3.3): a rating this SDK version does not define is still valid on
+		// the wire. The consumer treats it as unrated rather than rejecting the document.
+		`{"items":[{"contentRating":"unrated"}]}`,
+		`{"items":[{"contentRating":"adults-only","contentReasons":["language"]}]}`,
+		`{"items":[{"contentRating":""}]}`,
 	}
 	for _, raw := range valid {
 		if err := contentrating.ValidatePlaylistFragment([]byte(raw)); err != nil {
@@ -28,10 +33,11 @@ func TestValidatePlaylistFragment(t *testing.T) {
 		}
 	}
 
+	// Only a non-string rating is invalid; an unrecognized string is not.
 	invalid := []string{
 		`{"items":[{"contentRating":null}]}`,
-		`{"items":[{"contentRating":"unrated"}]}`,
 		`{"items":[{"contentRating":1}]}`,
+		`{"items":[{"contentRating":true}]}`,
 		`{"items":[{"contentReasons":null}]}`,
 		`{"items":[{"contentReasons":[""]}]}`,
 		`{"items":[{"contentReasons":"nudity"}]}`,
@@ -54,6 +60,7 @@ func TestValidatePlaylistFragmentMatchesRootEntrypoint(t *testing.T) {
 	for _, raw := range []string{
 		`{"items":[{"contentRating":"mature"}]}`,
 		`{"items":[{"contentRating":"unrated"}]}`,
+		`{"items":[{"contentRating":1}]}`,
 	} {
 		local := contentrating.ValidatePlaylistFragment([]byte(raw)) != nil
 		root := dp1.ValidateContentRatingExtension([]byte(raw)) != nil
@@ -66,7 +73,24 @@ func TestValidatePlaylistFragmentMatchesRootEntrypoint(t *testing.T) {
 func TestRatingConstants(t *testing.T) {
 	t.Parallel()
 	if contentrating.RatingGeneral != "general" || contentrating.RatingMature != "mature" {
-		t.Fatalf("rating constants must match the schema enum: %q %q",
+		t.Fatalf("rating constants must match the values v0.1.0 defines: %q %q",
 			contentrating.RatingGeneral, contentrating.RatingMature)
+	}
+}
+
+// Known separates the values this SDK version defines from the rest of an open vocabulary. It is
+// a branch hint for consumers, never a validity check: an unknown rating is a valid document that
+// means unrated.
+func TestRatingKnown(t *testing.T) {
+	t.Parallel()
+	for _, r := range []contentrating.Rating{contentrating.RatingGeneral, contentrating.RatingMature} {
+		if !r.Known() {
+			t.Fatalf("%q must report as known", r)
+		}
+	}
+	for _, r := range []contentrating.Rating{"adults-only", "teen", "", "General", "MATURE", "mature "} {
+		if r.Known() {
+			t.Fatalf("%q must not report as known", r)
+		}
 	}
 }
