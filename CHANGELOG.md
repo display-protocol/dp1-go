@@ -3,7 +3,11 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased
+## v0.6.2 — 2026-09-15
+
+Adds the draft Content Rating Extension, spec text merged in
+[display-protocol/dp1#52](https://github.com/display-protocol/dp1/pull/52). Additive: every document
+that validated before still does. `PlaylistItem` gains two exported fields (see Source compatibility).
 
 - Add draft content-rating extension types, embedded schemas, and parse helpers. `contentRating`
   is an optional per-item label; absence is unrated. Optional `contentReasons` are nonempty

@@ -156,7 +156,7 @@ Scheduling helpers for the playlists extension live in `displayat` (`Parse`, `Co
 
 Normative JSON Schemas are embedded from the spec repo under `internal/schema/` (core v1.1.0 + extensions, including `extensions/playlists/schema.json` with the optional item-level overlay `$defs/PlaylistItemExtension` — `note`, `displayAt`, `inlineManifest` — and `playlist_with_extension.json` / `playlist_item_with_extension.json`, which both reference that single overlay so whole-playlist and single-item validation cannot drift).
 
-`extensions/content-rating/` is a **draft** overlay (`$id` … `/v0.1.0/`), embedded byte-for-byte from [display-protocol/dp1#52](https://github.com/display-protocol/dp1/pull/52), which is still open — expect the shape to move until it merges. Its four composed files (`playlist_with_extension.json`, `playlist_item_with_extension.json`, and the `_with_playlists_extension` pair) resolve to the same `$defs/PlaylistItemExtension` — the item files `$ref` it directly, the playlist files reach it through `schema.json`'s `items` array — on the same no-drift rule as playlists.
+`extensions/content-rating/` is a **draft** overlay (`$id` … `/v0.1.0/`), embedded byte-for-byte from the spec repo's `extensions/content-rating/` (merged in [display-protocol/dp1#52](https://github.com/display-protocol/dp1/pull/52)); as a draft extension its shape may still change with a version bump. Its four composed files (`playlist_with_extension.json`, `playlist_item_with_extension.json`, and the `_with_playlists_extension` pair) resolve to the same `$defs/PlaylistItemExtension` — the item files `$ref` it directly, the playlist files reach it through `schema.json`'s `items` array — on the same no-drift rule as playlists.
 
 ## Testing
 
