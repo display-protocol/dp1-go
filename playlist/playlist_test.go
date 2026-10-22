@@ -63,6 +63,43 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSeriesID_AcceptsIntOrDecimalString locks in the schema's oneOf [integer, string]
+// for provenance.contract.seriesId: small ids are commonly sent as a JSON number, large
+// ones (beyond float64's exact range) as a decimal string — both must decode, and the
+// type always re-marshals as a string (schema-valid either way, and never risks the
+// precision loss a round-tripped large integer would).
+func TestSeriesID_AcceptsIntOrDecimalString(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		json string
+		want SeriesID
+	}{
+		{"small integer", `5`, "5"},
+		{"zero", `0`, "0"},
+		{"decimal string", `"115792089237316195423570985008687907853269984665640564039457584007913129639935"`, "115792089237316195423570985008687907853269984665640564039457584007913129639935"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(tc.json), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+			b, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(b) != `"`+string(tc.want)+`"` {
+				t.Fatalf("marshal: got %s", b)
+			}
+		})
+	}
+}
+
 // TestPlaylist_OpenAtAndLinks locks in dp1#55: OpenAt is a playlist-level fact distinct
 // from item-level DisplayAt scheduling (TestPlaylist_DisplayAt below exercises that one),
 // and Links/curators carry the fuller Entity shape (role/location/addresses/avatar/

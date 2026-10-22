@@ -2,6 +2,7 @@
 package playlist
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -286,13 +287,46 @@ type ProvenanceBlock struct {
 
 // ProvenanceContract is contract-specific provenance data.
 type ProvenanceContract struct {
-	Chain    string `json:"chain,omitempty"`
-	Standard string `json:"standard,omitempty"`
-	Address  string `json:"address,omitempty"`
-	SeriesID *int   `json:"seriesId,omitempty"`
-	TokenID  string `json:"tokenId,omitempty"`
-	URI      string `json:"uri,omitempty"`
-	MetaHash string `json:"metaHash,omitempty"`
+	Chain    string    `json:"chain,omitempty"`
+	Standard string    `json:"standard,omitempty"`
+	Address  string    `json:"address,omitempty"`
+	SeriesID *SeriesID `json:"seriesId,omitempty"`
+	TokenID  string    `json:"tokenId,omitempty"`
+	URI      string    `json:"uri,omitempty"`
+	MetaHash string    `json:"metaHash,omitempty"`
+}
+
+// SeriesID is a provenance series identifier: an integer when the contract numbers its
+// series with small values, or a decimal string when the identifier is too large for a
+// JSON number to hold exactly (the same reason TokenID is a plain string) — the schema's
+// seriesId is `oneOf [integer, string]`. Unmarshal accepts either wire shape; Marshal
+// always re-emits a string, which satisfies that oneOf either way and never risks the
+// float64 precision loss a round-tripped large integer would.
+type SeriesID string
+
+func (s *SeriesID) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if string(trimmed) == "null" {
+		return nil
+	}
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return fmt.Errorf("seriesId: %w", err)
+		}
+		*s = SeriesID(str)
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(b, &num); err != nil {
+		return fmt.Errorf("seriesId: must be an integer or a decimal string: %w", err)
+	}
+	*s = SeriesID(num.String())
+	return nil
+}
+
+func (s SeriesID) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(s))
 }
 
 // ProvenanceDep is documentary only; players must not fetch at runtime.

@@ -316,9 +316,11 @@
               "description": "Contract address"
             },
             "seriesId": {
-              "type": "integer",
-              "description": "Series identifier",
-              "minimum": 0
+              "description": "Series identifier within the contract. An integer when the contract numbers its series with small values; a decimal string when the identifier is too large for a JSON number to hold exactly (for example a 256-bit id), the same reason tokenId is a string",
+              "oneOf": [
+                {"type": "integer", "minimum": 0},
+                {"type": "string", "pattern": "^[0-9]+$"}
+              ]
             },
             "tokenId": {
               "type": "string",
