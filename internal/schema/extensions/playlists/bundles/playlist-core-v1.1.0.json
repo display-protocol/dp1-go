@@ -195,6 +195,12 @@
           "description": "Repeat automatically",
           "default": true
         },
+        "imageRendering": {
+          "type": "string",
+          "description": "How raster images are resampled when scaled. \"pixelated\" keeps hard pixel edges (nearest-neighbour), for pixel art and bitmaps; \"auto\" lets the player smooth. Independent of scaling, which decides how the artwork fits",
+          "enum": ["auto", "pixelated"],
+          "default": "auto"
+        },
         "interaction": {
           "type": "object",
           "properties": {

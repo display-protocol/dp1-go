@@ -228,13 +228,17 @@ func (it PlaylistItem) ParseInlineManifest() (*refmanifest.Manifest, error) {
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).
 type DisplayPrefs struct {
-	Scaling       string            `json:"scaling,omitempty"`
-	Margin        json.RawMessage   `json:"margin,omitempty"` // number or "%|vw|vh" string
-	Background    string            `json:"background,omitempty"`
-	Autoplay      *bool             `json:"autoplay,omitempty"`
-	Loop          *bool             `json:"loop,omitempty"`
-	Interaction   *InteractionPrefs `json:"interaction,omitempty"`
-	UserOverrides map[string]bool   `json:"userOverrides,omitempty"`
+	Scaling    string          `json:"scaling,omitempty"`
+	Margin     json.RawMessage `json:"margin,omitempty"` // number or "%|vw|vh" string
+	Background string          `json:"background,omitempty"`
+	Autoplay   *bool           `json:"autoplay,omitempty"`
+	Loop       *bool           `json:"loop,omitempty"`
+	// ImageRendering is "auto" (let the player smooth) or "pixelated"
+	// (nearest-neighbour, hard pixel edges — pixel art and bitmaps).
+	// Independent of Scaling, which decides how the artwork fits.
+	ImageRendering string            `json:"imageRendering,omitempty"`
+	Interaction    *InteractionPrefs `json:"interaction,omitempty"`
+	UserOverrides  map[string]bool   `json:"userOverrides,omitempty"`
 }
 
 // InteractionPrefs configures input (keyboard / mouse).

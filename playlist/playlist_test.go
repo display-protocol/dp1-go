@@ -28,7 +28,7 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 			{
 				Source:  "https://a",
 				License: "token",
-				Display: &DisplayPrefs{Scaling: "fill"},
+				Display: &DisplayPrefs{Scaling: "fill", ImageRendering: "pixelated"},
 				Note:    &playlists.Note{Text: "Item card"},
 				Provenance: &ProvenanceBlock{
 					Type: ProvenanceOnChain,
@@ -60,6 +60,9 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Items[0].Note == nil || out.Items[0].Note.Text != "Item card" {
 		t.Fatalf("item note: %+v", out.Items[0].Note)
+	}
+	if out.Items[0].Display == nil || out.Items[0].Display.ImageRendering != "pixelated" {
+		t.Fatalf("item display imageRendering: %+v", out.Items[0].Display)
 	}
 }
 
