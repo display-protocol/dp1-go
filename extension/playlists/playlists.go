@@ -28,9 +28,13 @@ type ResponseMapping struct {
 
 // Overlay is the optional top-level extension object merged into a core playlist JSON value.
 type Overlay struct {
-	Note         *Note             `json:"note,omitempty"`
-	Curators     []identity.Entity `json:"curators,omitempty"`
-	Summary      string            `json:"summary,omitempty"`
-	CoverImage   string            `json:"coverImage,omitempty"`
-	DynamicQuery *DynamicQuery     `json:"dynamicQuery,omitempty"`
+	Note     *Note             `json:"note,omitempty"`
+	OpenAt   string            `json:"openAt,omitempty"` // see playlist.Playlist.OpenAt (dp1#55)
+	Curators []identity.Entity `json:"curators,omitempty"`
+	Summary  string            `json:"summary,omitempty"`
+	// Links is editorial content about the playlist (articles, events, news); see
+	// playlist.Playlist.Links (dp1#55).
+	Links        []identity.Link `json:"links,omitempty"`
+	CoverImage   string          `json:"coverImage,omitempty"`
+	DynamicQuery *DynamicQuery   `json:"dynamicQuery,omitempty"`
 }

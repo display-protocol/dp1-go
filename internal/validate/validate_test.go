@@ -240,7 +240,10 @@ func TestPlaylistsExtensionFragment_validationFailures(t *testing.T) {
 	}{
 		{"summary_empty", `{"summary":""}`},
 		{"coverImage_not_uri", `{"coverImage":"not a uri"}`},
-		{"curator_missing_key", `{"curators":[{"name":"A"}]}`},
+		// Entity's only required field is name (core ref-manifest Entity, dp1#55-aligned);
+		// a curator with no key is valid (wallet-based publishers may have none yet).
+		// role, when present, is still constrained to the schema's enum.
+		{"curator_invalid_role", `{"curators":[{"name":"A","role":"not-a-role"}]}`},
 		{"dynamicQuery_incomplete", `{"dynamicQuery":{"profile":"https-json-v1"}}`},
 		{"note_text_empty", `{"note":{"text":""}}`},
 		{"note_duration_not_positive", `{"note":{"text":"x","duration":0}}`},

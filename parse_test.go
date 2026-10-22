@@ -150,6 +150,59 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	}
 }
 
+// TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity locks in dp1#55
+// end to end through the real embedded JSON Schema (not just the Go struct round trip
+// playlist_test.go covers): openAt, playlist-level links, and curators carrying the full
+// Entity shape (role/location/addresses/avatar/biographies/links) must all validate, not
+// just decode. This is exactly the shape a real exhibition document, with curator and
+// artist profiles, needs the feed to accept.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	kid, err := sign.Ed25519DIDKey(priv.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl := playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "Ext",
+		Items:     []playlist.PlaylistItem{{Source: "https://a"}},
+		OpenAt:    "2026-10-01T18:00:00-04:00",
+		Curators: []identity.Entity{{
+			Name:        "Alice",
+			Key:         kid,
+			Role:        "curator",
+			Location:    "Brooklyn, USA",
+			Addresses:   []string{"0xabc"},
+			Avatar:      &identity.Thumbnail{URI: "https://a/avatar.png"},
+			Biographies: []identity.Biography{{Text: "Curator bio"}},
+			Links:       []identity.Link{{Type: identity.LinkTypeWebsite, URL: "https://alice.example"}},
+		}},
+		Links: []identity.Link{{
+			Type:  identity.LinkTypeArticle,
+			URL:   "https://press.example/review",
+			Title: "A review",
+		}},
+	}
+	body, _ := json.Marshal(pl)
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2026-10-01T12:00:00Z")
+	pl.Signatures = []playlist.Signature{sig}
+	signed, _ := json.Marshal(pl)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.OpenAt != pl.OpenAt {
+		t.Fatalf("openAt: got %q want %q", out.OpenAt, pl.OpenAt)
+	}
+	if len(out.Curators) != 1 || out.Curators[0].Role != "curator" || out.Curators[0].Location != "Brooklyn, USA" {
+		t.Fatalf("curator: %+v", out.Curators)
+	}
+	if len(out.Links) != 1 || out.Links[0].Title != "A review" {
+		t.Fatalf("links: %+v", out.Links)
+	}
+}
+
 func TestParseAndValidatePlaylistWithContentRatingExtension(t *testing.T) {
 	t.Parallel()
 	_, priv, _ := ed25519.GenerateKey(nil)

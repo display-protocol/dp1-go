@@ -26,11 +26,22 @@ type Playlist struct {
 	// --- Registry extension: "playlists" (draft) — additive optional fields only ---
 	// These are not part of DP-1 core JSON Schema; they are validated only when using
 	// ParseAndValidatePlaylistWithPlaylistsExtension. Safe to omit for core-only documents.
-	Note         *playlists.Note         `json:"note,omitempty"`
-	Curators     []identity.Entity       `json:"curators,omitempty"`
-	Summary      string                  `json:"summary,omitempty"`
+	Note     *playlists.Note   `json:"note,omitempty"`
+	Curators []identity.Entity `json:"curators,omitempty"`
+	Summary  string            `json:"summary,omitempty"`
+	// OpenAt is when this playlist's own subject became public — an exhibition's
+	// opening, a collection's release. Reuses the DisplayAt wire shape for one consistent
+	// date format across DP-1, but is NOT displayAt Scheduling (§3.5 on PlaylistItem):
+	// that gates which items are eligible to play; OpenAt is a playlist-level fact for
+	// ordering and display only, and sets no eligibility, timer, or activation. Distinct
+	// from Created too, which is the document's own issuance time and churns on every
+	// re-export; OpenAt is the real-world event and does not (dp1#55).
+	OpenAt       string                  `json:"openAt,omitempty"`
 	CoverImage   string                  `json:"coverImage,omitempty"`
 	DynamicQuery *playlists.DynamicQuery `json:"dynamicQuery,omitempty"`
+	// Links is editorial content about the playlist (articles, events, news), in the
+	// order to show them — references only, the content itself stays at the URL (dp1#55).
+	Links []identity.Link `json:"links,omitempty"`
 }
 
 // Defaults holds playlist-level defaults inherited by items.

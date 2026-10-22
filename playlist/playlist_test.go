@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/display-protocol/dp1-go/extension/contentrating"
+	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 )
 
@@ -59,6 +60,57 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Items[0].Note == nil || out.Items[0].Note.Text != "Item card" {
 		t.Fatalf("item note: %+v", out.Items[0].Note)
+	}
+}
+
+// TestPlaylist_OpenAtAndLinks locks in dp1#55: OpenAt is a playlist-level fact distinct
+// from item-level DisplayAt scheduling (TestPlaylist_DisplayAt below exercises that one),
+// and Links/curators carry the fuller Entity shape (role/location/addresses/avatar/
+// biographies/links), not just name+key+url.
+func TestPlaylist_OpenAtAndLinks(t *testing.T) {
+	t.Parallel()
+	p := Playlist{
+		DPVersion: "1.1.0",
+		Title:     "T",
+		Items:     []PlaylistItem{{Source: "https://a", License: "token"}},
+		OpenAt:    "2026-07-21T18:00:00-04:00",
+		Curators: []identity.Entity{{
+			Name:        "A Curator",
+			Key:         "did:key:z6Mk",
+			Role:        "curator",
+			Location:    "New York, USA",
+			Addresses:   []string{"0xabc"},
+			Avatar:      &identity.Thumbnail{URI: "https://a/avatar.png"},
+			Biographies: []identity.Biography{{Text: "Bio text"}},
+			Links:       []identity.Link{{Type: identity.LinkTypeWebsite, URL: "https://a"}},
+		}},
+		Links: []identity.Link{{
+			Type:    identity.LinkTypeArticle,
+			URL:     "https://press.example/review",
+			Title:   "A review",
+			Date:    "2026-07-20T00:00:00Z",
+			Authors: []identity.Entity{{Name: "A Writer"}},
+		}},
+	}
+	b, err := json.Marshal(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Playlist
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.OpenAt != p.OpenAt {
+		t.Fatalf("openAt: got %q want %q", out.OpenAt, p.OpenAt)
+	}
+	if len(out.Curators) != 1 || out.Curators[0].Role != "curator" || out.Curators[0].Location != "New York, USA" {
+		t.Fatalf("curator: %+v", out.Curators)
+	}
+	if len(out.Curators[0].Biographies) != 1 || out.Curators[0].Biographies[0].Text != "Bio text" {
+		t.Fatalf("curator biographies: %+v", out.Curators[0].Biographies)
+	}
+	if len(out.Links) != 1 || out.Links[0].Title != "A review" || len(out.Links[0].Authors) != 1 {
+		t.Fatalf("playlist links: %+v", out.Links)
 	}
 }
 
