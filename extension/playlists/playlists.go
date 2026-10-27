@@ -1,12 +1,20 @@
 // Package playlists contains types for the DP-1 "playlists" extension (draft): optional fields on a playlist document.
 package playlists
 
-import "github.com/display-protocol/dp1-go/extension/identity"
+import (
+	"encoding/json"
+
+	"github.com/display-protocol/dp1-go/extension/identity"
+)
 
 // Note is an experimental intermission card: short artist-authored text before the playlist or an item (not DP-1 core).
 type Note struct {
 	Text     string   `json:"text"`
 	Duration *float64 `json:"duration,omitempty"` // display seconds when present; schema default 20 when omitted
+	// Title is the heading shown above the text (dp1#55).
+	Title string `json:"title,omitempty"`
+	// Author is who wrote the text; omitted, the note is the curators' own (dp1#55).
+	Author *identity.Entity `json:"author,omitempty"`
 }
 
 // DynamicQuery configures dynamic item fetching from an indexer.
@@ -37,4 +45,8 @@ type Overlay struct {
 	Links        []identity.Link `json:"links,omitempty"`
 	CoverImage   string          `json:"coverImage,omitempty"`
 	DynamicQuery *DynamicQuery   `json:"dynamicQuery,omitempty"`
+	// Series is the series the playlist's items belong to; see playlist.Playlist.Series
+	// (dp1#55). Raw JSON here rather than []playlist.SeriesEntry: an entry's provenance is a
+	// core playlist type, and this package cannot import playlist without a cycle.
+	Series json.RawMessage `json:"series,omitempty"`
 }

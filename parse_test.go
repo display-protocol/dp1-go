@@ -1003,3 +1003,114 @@ func TestContentRatingIgnoresCaseVariantMembers(t *testing.T) {
 		t.Fatalf("reasons: %v", out.Items[0].ContentReasons)
 	}
 }
+
+// TestParseAndValidatePlaylistWithPlaylistsExtension_series locks in dp1#55 §3.7 through
+// the real embedded schema: a playlist may carry the series its items belong to, as a
+// lookup table rather than a second list of content. The entry is held to the registry row
+// it claims to be — seriesRegistry, a seriesId, no tokenId — because that triple is the key
+// a consumer joins items on, and an entry naming one token instead of the series would make
+// the join silently wrong rather than invalid.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_series(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	seriesID := playlist.SeriesID("8520038953287439433536834341059117372268365319568716555346026339118809853347")
+	manifest := mustMarshal(t, &refmanifest.Manifest{
+		RefVersion: "1.2.0",
+		ID:         "ref-bloomcore",
+		Created:    "2023-03-03T08:34:13Z",
+		Locale:     "en",
+		Metadata: &refmanifest.Metadata{
+			Title:   "BLOOMCORE",
+			Artists: []refmanifest.Artist{{Name: "Rick Silva"}},
+		},
+	})
+	// The item is one edition of that series: the same contract and seriesId, plus the
+	// tokenId that makes it a specific edition (DP-1 §6, "One specific edition").
+	item := playlist.PlaylistItem{
+		Source: "https://example.com/bloomcore/1",
+		Provenance: &playlist.ProvenanceBlock{
+			Type: playlist.ProvenanceOnChain,
+			Contract: &playlist.ProvenanceContract{
+				Chain:    "evm",
+				Standard: "erc721",
+				Address:  "0xe59B7D60d7d7183E09d8ABb6DF8B20EB4CF66632",
+				SeriesID: &seriesID,
+				TokenID:  "8520038953287439433536834341059117372268365319568716555346026339118809853347",
+			},
+		},
+	}
+	seriesEntry := playlist.SeriesEntry{
+		Provenance: &playlist.ProvenanceBlock{
+			Type: playlist.ProvenanceSeriesRegistry,
+			Contract: &playlist.ProvenanceContract{
+				Chain:    "evm",
+				Standard: "erc721",
+				Address:  "0xe59B7D60d7d7183E09d8ABb6DF8B20EB4CF66632",
+				SeriesID: &seriesID,
+			},
+		},
+		InlineManifest: manifest,
+	}
+
+	sign1 := func(pl playlist.Playlist) []byte {
+		body, _ := json.Marshal(pl)
+		sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2026-10-27T12:00:00Z")
+		pl.Signatures = []playlist.Signature{sig}
+		signed, _ := json.Marshal(pl)
+		return signed
+	}
+
+	base := playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "BLOOMCORE",
+		Items:     []playlist.PlaylistItem{item},
+		Series:    []playlist.SeriesEntry{seriesEntry},
+	}
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(sign1(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Series) != 1 {
+		t.Fatalf("series: got %d entries, want 1", len(out.Series))
+	}
+	got := out.Series[0]
+	if got.Provenance == nil || got.Provenance.Type != playlist.ProvenanceSeriesRegistry {
+		t.Fatalf("series provenance: %+v", got.Provenance)
+	}
+	if got.Provenance.Contract == nil || got.Provenance.Contract.SeriesID == nil || *got.Provenance.Contract.SeriesID != seriesID {
+		t.Fatalf("series seriesId: %+v", got.Provenance.Contract)
+	}
+	if got.Provenance.Contract.TokenID != "" {
+		t.Fatalf("series entry names a token: %q", got.Provenance.Contract.TokenID)
+	}
+	// The entry's manifest decodes exactly as an item's does.
+	m, err := got.ParseInlineManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m == nil || m.Metadata == nil || m.Metadata.Title != "BLOOMCORE" {
+		t.Fatalf("series inlineManifest: %+v", m)
+	}
+	// And the item still names the same series, which is what a consumer groups on.
+	if out.Items[0].Provenance.Contract.SeriesID == nil || *out.Items[0].Provenance.Contract.SeriesID != seriesID {
+		t.Fatalf("item seriesId: %+v", out.Items[0].Provenance.Contract)
+	}
+
+	// An entry carrying a tokenId is one edition, not the series: refused.
+	withToken := base
+	entry := seriesEntry
+	contract := *seriesEntry.Provenance.Contract
+	contract.TokenID = "8520038953287439433536834341059117372268365319568716555346026339118809853348"
+	entry.Provenance = &playlist.ProvenanceBlock{Type: playlist.ProvenanceSeriesRegistry, Contract: &contract}
+	withToken.Series = []playlist.SeriesEntry{entry}
+	if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(sign1(withToken)); err == nil {
+		t.Fatal("a series entry naming a tokenId must be refused")
+	}
+
+	// An entry with no provenance names no series at all: refused.
+	noProvenance := base
+	noProvenance.Series = []playlist.SeriesEntry{{InlineManifest: manifest}}
+	if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(sign1(noProvenance)); err == nil {
+		t.Fatal("a series entry with no provenance must be refused")
+	}
+}
