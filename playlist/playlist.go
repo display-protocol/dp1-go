@@ -43,49 +43,6 @@ type Playlist struct {
 	// Links is editorial content about the playlist (articles, events, news), in the
 	// order to show them — references only, the content itself stays at the URL (dp1#55).
 	Links []identity.Link `json:"links,omitempty"`
-	// Series is the series the playlist's items belong to — one entry per series registry
-	// row, for a consumer that groups items by series instead of listing every item. A
-	// lookup table, not a second list of content: Items stays the whole playable list and
-	// its order, and nothing here plays. A consumer that groups joins an item to an entry
-	// on contract.address and contract.seriesId; one that does not group ignores it (dp1#55).
-	Series []SeriesEntry `json:"series,omitempty"`
-}
-
-// SeriesEntry is one row of a series registry, resolved: the key the registry holds and the
-// metadata document that key points at.
-//
-// A registry row has no media of its own, which is why an entry carries no source, duration,
-// license, display or repro and is never played — the tokens of the series are the playable
-// things, and they are items. It defines no new metadata vocabulary either: the document is
-// the same Ref Manifest an item carries (dp1#55, playlists extension §3.7).
-type SeriesEntry struct {
-	// Provenance names the series itself, never one of its tokens: seriesRegistry with
-	// contract.seriesId and no contract.tokenId, which the composed extension schema
-	// enforces. It is also the group key — an item belongs to this entry when its own
-	// provenance names the same contract.address and contract.seriesId.
-	Provenance *ProvenanceBlock `json:"provenance,omitempty"`
-	// Ref is the URI of the series' Ref Manifest.
-	Ref string `json:"ref,omitempty"`
-	// InlineManifest is the series' Ref Manifest inline, held as raw JSON for exactly the
-	// reasons PlaylistItem.InlineManifest is — see that field's comment: the bytes stay
-	// verbatim under the playlist signature, and a core-only parser must survive a shape it
-	// does not implement. Decode it the same way, with ParseInlineManifest or
-	// dp1.ParseAndValidateRefManifest.
-	InlineManifest json.RawMessage `json:"inlineManifest,omitempty"`
-}
-
-// ParseInlineManifest decodes the series entry's inline Ref Manifest, exactly as
-// PlaylistItem.ParseInlineManifest decodes an item's — same bytes, same contract, same
-// (nil, nil) for an absent or null field.
-func (se SeriesEntry) ParseInlineManifest() (*refmanifest.Manifest, error) {
-	if len(se.InlineManifest) == 0 || string(se.InlineManifest) == "null" {
-		return nil, nil
-	}
-	var m refmanifest.Manifest
-	if err := json.Unmarshal(se.InlineManifest, &m); err != nil {
-		return nil, fmt.Errorf("playlist: decode series inlineManifest: %w", err)
-	}
-	return &m, nil
 }
 
 // Defaults holds playlist-level defaults inherited by items.
