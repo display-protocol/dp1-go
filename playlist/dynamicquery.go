@@ -501,9 +501,8 @@ func clonePlaylist(p *Playlist) *Playlist {
 	if len(p.Signatures) > 0 {
 		c.Signatures = append([]Signature(nil), p.Signatures...)
 	}
-	if len(p.Curators) > 0 {
-		c.Curators = append([]identity.Entity(nil), p.Curators...)
-	}
+	c.Curators = cloneEntities(p.Curators)
+	c.Links = cloneLinks(p.Links)
 	if p.Defaults != nil {
 		d := *p.Defaults
 		if p.Defaults.Display != nil {
@@ -550,6 +549,79 @@ func clonePlaylist(p *Playlist) *Playlist {
 			copy(reasons, src)
 			c.Items[i].ContentReasons = &reasons
 		}
+	}
+	return &c
+}
+
+// cloneEntity deep-copies an Entity's reference-typed fields so a cloned playlist shares
+// no backing array with its receiver.
+//
+// Until dp1#55 an Entity held nothing but plain strings, so clonePlaylist's one-line
+// `append([]identity.Entity(nil), ...)` over Curators was already a complete copy. The
+// Addresses/Avatar/Biographies/Links the same change added turned that line into a
+// shallow copy without touching it — the kind of gap that opens in a clone function from
+// a distance, because nothing in the type that grew points back here. Any field added to
+// Entity, Link or Thumbnail from now on must be considered here too.
+func cloneEntity(e identity.Entity) identity.Entity {
+	c := e
+	if e.Addresses != nil {
+		c.Addresses = append([]string(nil), e.Addresses...)
+	}
+	c.Avatar = cloneThumbnail(e.Avatar)
+	if e.Biographies != nil {
+		// Biography is strings only, so the element copy append makes is deep enough.
+		c.Biographies = append([]identity.Biography(nil), e.Biographies...)
+	}
+	c.Links = cloneLinks(e.Links)
+	return c
+}
+
+// cloneEntities and cloneLinks recurse into each other: an entity's link credits authors,
+// who are themselves entities with links of their own. A decoded document is finite, so
+// the recursion terminates with it.
+//
+// Both keep a nil slice nil rather than returning an empty one — clonePlaylist's result is
+// re-marshaled and re-signed by callers, and nil versus present-empty is a difference the
+// JCS payload would carry.
+func cloneEntities(src []identity.Entity) []identity.Entity {
+	if src == nil {
+		return nil
+	}
+	out := make([]identity.Entity, len(src))
+	for i, e := range src {
+		out[i] = cloneEntity(e)
+	}
+	return out
+}
+
+func cloneLinks(src []identity.Link) []identity.Link {
+	if src == nil {
+		return nil
+	}
+	out := make([]identity.Link, len(src))
+	for i, l := range src {
+		c := l
+		c.Thumbnail = cloneThumbnail(l.Thumbnail)
+		c.Authors = cloneEntities(l.Authors)
+		out[i] = c
+	}
+	return out
+}
+
+// cloneThumbnail copies the W/H pointers too: they exist to tell "absent" from a value,
+// so a clone that shares them lets a caller rewrite a dimension on the receiver.
+func cloneThumbnail(t *identity.Thumbnail) *identity.Thumbnail {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	if t.W != nil {
+		w := *t.W
+		c.W = &w
+	}
+	if t.H != nil {
+		h := *t.H
+		c.H = &h
 	}
 	return &c
 }
