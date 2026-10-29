@@ -13,16 +13,25 @@ compatibility; every break is listed here with the migration.
   `SetString` materialized a k-digit denominator before `IsInt` could reject the literal as
   fractional. `{"seriesId": 1e-1000000}` is ten bytes on the wire and allocated roughly 3 MB,
   the same amplification the positive branch already refused, reached through the denominator
-  instead of the numerator. The bound now reads the exponent's magnitude and ignores its sign.
-  A negative exponent the mantissa genuinely absorbs (`1500e-2` is `15`) is small and still
-  decodes. Reported against a feed built on v0.7.0.
+  instead of the numerator. The bound now reads the exponent's magnitude and ignores its sign,
+  and bounds that magnitude on its own instead of against the mantissa — the denominator is
+  the only amplification a negative exponent buys, while the mantissa's digits are already on
+  the wire. A negative exponent the mantissa genuinely absorbs still decodes however long the
+  mantissa is: `1500e-2` is `15`, and `1` followed by 512 zeros times `10^-512` is `1`. Every
+  literal that decoded on v0.7.0 still decodes; the only refusals added are fractional ones
+  `IsInt` already rejected, so what changes there is which error comes back, not whether one
+  does. Reported against a feed built on v0.7.0.
 - `playlist.SeriesID`'s digit bound is now total at the limits of `int`. It range-checked the
   exponent only after arithmetic on it, and Go's signed overflow wraps: `-math.MinInt64` is
   `math.MinInt64` again, and `math.MaxInt64 + len(mantissa)` wraps negative, so either limit
   satisfied the bound and passed the literal through. No amplification was reachable that way —
   `big.Rat.SetString` refuses an exponent that large on its own, for about 1.5 KB — so this was
   a guard correct only by accident of another package's internal limit. The range check now
-  runs before the arithmetic.
+  runs before the arithmetic. Closing that hole must not cost a zero mantissa its place:
+  `0e9223372036854775807` is the integer `0`, `big.Rat` reads it as `0` for under 100 bytes
+  without applying the exponent at all, and it decoded on v0.7.0 precisely because the sum
+  wrapped. A mantissa with no non-zero digit is therefore accepted ahead of either magnitude
+  test, on both signs — there is no expansion to bound.
 - The doc comment on that bound claimed no path inside the module reaches it because the
   `ParseAndValidate*` entrypoints validate first. That is false for underflow: `internal/validate`
   decodes to `any` without `UseNumber`, and `encoding/json` errors on an overflowing literal

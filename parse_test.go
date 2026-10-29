@@ -224,8 +224,13 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity(t *t
 //
 // An error is not asserted as the proof for the same reason as the unit tests in
 // playlist/: the literal is fractional, so IsInt would refuse it either way.
+//
+// No t.Parallel() here, deliberately: TotalAlloc is a process-wide counter, so a test
+// allocating concurrently with either measurement below lands in the control or the attack
+// delta and is charged to the literal. Go releases parked parallel tests only after the
+// sequential pass finishes, so staying sequential is what isolates the measurement — the
+// same reason TestSeriesID_RejectsNegativeExponentBlowup in playlist/ is sequential.
 func TestParseAndValidatePlaylist_seriesIDUnderflowDoesNotExpand(t *testing.T) {
-	t.Parallel()
 	// Comfortably under the ~2.9 MB the unguarded expansion costs, comfortably over the
 	// handful of KB that parsing one extra literal costs.
 	const maxExtraAlloc = 256 << 10
@@ -289,6 +294,12 @@ func TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema(t *test
 	}{
 		{"integer wire form", `512`, "512"},
 		{"decimal string wire form", `"` + bigSeries + `"`, playlist.SeriesID(bigSeries)},
+		// An absorbed negative exponent, through the schema and the decoder both: the
+		// schema's integer branch accepts it (encoding/json reads it as float64 1), and
+		// SeriesID's digit bound must not refuse it for the 513 mantissa characters it
+		// spends to say 1. This is the literal the first cut of the negative-exponent
+		// bound rejected.
+		{"absorbed negative exponent", "1" + strings.Repeat("0", 512) + "e-512", "1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

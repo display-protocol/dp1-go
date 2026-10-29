@@ -180,8 +180,16 @@ func TestSeriesID_RejectsExponentBlowup(t *testing.T) {
 // TotalAlloc is cumulative and monotonic, so an intervening GC cannot perturb the delta,
 // and the 64 KiB ceiling sits ~45x under the unguarded cost and ~30x over the guarded one
 // — wide enough that allocator noise cannot reach it from either side.
+//
+// It is also PROCESS-WIDE, which is why neither this test nor its subtests may call
+// t.Parallel(): any other test allocating between the two ReadMemStats calls lands in the
+// delta and is charged to this literal. Under `go test ./playlist -race -count=10` that
+// read up to ~390 KB against a 64 KiB ceiling and failed on correct code, reporting a
+// big.Rat regression that had not happened. Go releases parked parallel tests only after
+// the sequential pass finishes, so a test that never parks is the isolation — no
+// -parallel=1 at the call site required. Keep the measurement sequential if cases are
+// added; the same applies to the sibling measurement in parse_test.go.
 func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
-	t.Parallel()
 	const maxAlloc = 64 << 10
 	cases := []string{
 		`1e-1000000`,
@@ -191,7 +199,6 @@ func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
 	}
 	for _, in := range cases {
 		t.Run(in, func(t *testing.T) {
-			t.Parallel()
 			if seriesIDWithinDigitBound(in) {
 				t.Fatalf("bound admitted %q (%d bytes); big.Rat would build a denominator of 10^|exponent| for it", in, len(in))
 			}
@@ -206,6 +213,59 @@ func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
 			if used := after.TotalAlloc - before.TotalAlloc; used > maxAlloc {
 				t.Fatalf("rejecting %q (%d bytes) allocated %d bytes, want under %d: the bound let it reach big.Rat",
 					in, len(in), used, maxAlloc)
+			}
+		})
+	}
+}
+
+// A zero mantissa is the integer 0 however large its exponent, on either sign, and the
+// bound accepts it without consulting the magnitude at all. That is safe only because
+// big.Rat declines to do the work: SetString returns at its own zero check before any
+// exponent is applied, so `0e-1000000` costs ~48 bytes, the same as `0e-5`. This test
+// locks that short-circuit rather than the bound's return value, because the bound is
+// deliberately permissive here and the short-circuit is the whole reason it may be — if a
+// future math/big built the 10^k denominator before looking at the mantissa, a zero
+// mantissa would become the same amplification vector this guard exists to refuse, and
+// nothing else in the suite would notice.
+//
+// Both signs are covered because the two reached this state differently, and the positive
+// side is the one that regressed. `0e-5000` plainly decoded to "0" on v0.7.0. So did
+// `0e9223372036854775807` — but only because len(mantissa)+exponent overflowed int and
+// wrapped into range, the very hole the range check closed. Closing it without exempting
+// the zero mantissa turned a literal that decoded into a hard refusal, which is why the
+// exemption is not gated on the exponent's magnitude or the mantissa's length.
+//
+// Sequential for the same reason as the measurement above: TotalAlloc is process-wide.
+func TestSeriesID_ZeroMantissaCostsNothing(t *testing.T) {
+	const maxAlloc = 64 << 10
+	for _, in := range []string{
+		`0e-5000`, `0e-1000000`, `-0e-5000`, `0.0e-1000000`, `0E-2000`,
+		`0e5000`, `0E+2000`, `0.0e1000000`,
+		// The overflow band: on v0.7.0 these passed the bound only because the sum
+		// wrapped negative, and big.Rat read them as 0 regardless. An exponent one past
+		// math.MaxInt (`0e9223372036854775808`) is NOT here: strconv.Atoi refuses it
+		// before any of this, exactly as it does on the base branch, so nothing regressed
+		// there and the zero mantissa never gets a say.
+		`0e9223372036854775807`, `-0e9223372036854775807`, `0e-9223372036854775808`,
+	} {
+		t.Run(in, func(t *testing.T) {
+			if !seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound refused %q; it is the integer 0 and big.Rat applies no exponent to it", in)
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			var got SeriesID
+			err := json.Unmarshal([]byte(in), &got)
+			runtime.ReadMemStats(&after)
+			if err != nil {
+				t.Fatalf("%s is the integer 0 and decoded on v0.7.0; it must still decode: %v", in, err)
+			}
+			if got != "0" {
+				t.Fatalf("%s decoded to %q, want \"0\"", in, got)
+			}
+			if used := after.TotalAlloc - before.TotalAlloc; used > maxAlloc {
+				t.Fatalf("decoding %q allocated %d bytes, want under %d: big.Rat applied the exponent to a zero mantissa",
+					in, used, maxAlloc)
 			}
 		})
 	}
@@ -242,9 +302,17 @@ func TestSeriesID_BoundRefusesExponentsAtIntLimits(t *testing.T) {
 // A negative exponent the mantissa really does absorb is an ordinary integer and must
 // keep decoding: bounding on the exponent's magnitude must not turn 1500e-2 into an
 // error just because the sign is now counted.
+//
+// The long case is the one that matters, and the one the first cut of this fix got wrong:
+// the short literals pass under any formulation, because 4 + 2 is inside the bound
+// whether the exponent is summed with the mantissa or not. "1" followed by 512 zeros,
+// times 10^-512, is the integer 1 — 513 mantissa characters against a 512 exponent, which
+// summed is 1025 and over the 1024 budget. It decoded on v0.7.0 and must keep decoding;
+// a formulation that sums the two refuses it and only the long case notices.
 func TestSeriesID_AcceptsAbsorbedNegativeExponent(t *testing.T) {
 	t.Parallel()
 	cases := map[string]SeriesID{`1500e-2`: "15", `100e-2`: "1", `1E-0`: "1"}
+	cases["1"+strings.Repeat("0", 512)+"e-512"] = "1"
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {
 			t.Parallel()

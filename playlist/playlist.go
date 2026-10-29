@@ -416,7 +416,8 @@ const maxSeriesIDDigits = 1024
 // document the schema accepts (neither branch of the schema's oneOf carries a maxLength).
 // The bound is on amplification, not on magnitude — which is why it reads the exponent's
 // magnitude and not its sign: a negative exponent amplifies big.Rat's denominator exactly
-// as a positive one amplifies its numerator.
+// as a positive one amplifies its numerator. The two signs are bounded separately rather
+// than summed, because the mantissa means something different to each; see below.
 func seriesIDWithinDigitBound(lit string) bool {
 	mantissa, exponent := lit, 0
 	if i := strings.IndexAny(lit, "eE"); i >= 0 {
@@ -429,31 +430,81 @@ func seriesIDWithinDigitBound(lit string) bool {
 		}
 		exponent = n
 	}
-	// Compare the exponent's magnitude against the bound BEFORE any arithmetic on it.
-	// Both the negation and the addition below would otherwise overflow int on a
-	// literal that names an exponent near the type's limits, and signed overflow in Go
-	// wraps rather than traps: -math.MinInt is math.MinInt again, so negating would
-	// leave a hugely negative value that satisfies `<= maxSeriesIDDigits` and admit the
-	// literal; math.MaxInt + len(mantissa) wraps negative and does the same. Rejecting
-	// first is what makes the guard total — `1e-9223372036854775808` and
-	// `1e9223372036854775807` are both ~23 bytes.
+	// A mantissa with no non-zero digit is the integer 0 whatever its exponent says, and
+	// it is the one shape that absorbs an exponent of ANY size — so it is answered before
+	// either magnitude test, and for both signs. Accepting it is safe only because
+	// big.Rat declines to do the work: SetString returns at its own zero check before any
+	// exponent is applied, on either sign, so `0e-1000000` and `0e9223372036854775807`
+	// each cost about 50-100 bytes, as does a mantissa of a million zeros. There is no
+	// expansion to bound, and these are integers the schema's integer branch accepts —
+	// `0e-5000` and `0e9223372036854775807` both decoded to "0" on v0.7.0, the latter
+	// only because the overflowing sum below happened to wrap into range.
+	// TestSeriesID_ZeroMantissaCostsNothing locks the short-circuit this relies on; if a
+	// future math/big built the 10^k denominator before looking at the mantissa, this
+	// would become the very amplification vector the rest of the function refuses.
 	//
-	// A negative exponent shrinks the VALUE but not the work, which is why its
-	// magnitude counts the same as a positive one's: big.Rat holds
-	// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
-	// denominator before IsInt can call the value fractional and reject it.
-	// 1e-1000000 is ten bytes and roughly 3 MB of allocation — the same
-	// amplification the positive branch exists to refuse, reached through the
-	// denominator instead of the numerator. Bound on the magnitude either way;
-	// a negative exponent the mantissa really does absorb (1500e-2 is 15) is
-	// small, so it still passes.
-	if exponent < -maxSeriesIDDigits || exponent > maxSeriesIDDigits {
+	// It is deliberately not gated on len(mantissa): a zero mantissa costs what its bytes
+	// cost however long it is, and gating it would re-refuse literals the base branch
+	// accepted in the overflow band (1025 zeros times 10^math.MaxInt decoded to "0").
+	if seriesIDMantissaIsZero(mantissa) {
+		return true
+	}
+	// Every comparison below runs BEFORE any arithmetic on the exponent, because signed
+	// overflow in Go wraps rather than traps and the exponent came off the wire: a
+	// literal may name math.MaxInt or math.MinInt (`1e9223372036854775807` and
+	// `1e-9223372036854775808` are ~23 bytes each). math.MaxInt + len(mantissa) wraps
+	// negative and would satisfy `<= maxSeriesIDDigits`, admitting the literal; negating
+	// math.MinInt yields math.MinInt again and used to do the same. Testing the exponent
+	// first, and never negating it, is what makes the guard total.
+	if exponent > maxSeriesIDDigits {
 		return false
 	}
 	if exponent < 0 {
-		exponent = -exponent
+		// A negative exponent shrinks the VALUE but not the work: big.Rat holds
+		// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
+		// denominator in full — before norm() can cancel it against the mantissa, and
+		// before IsInt can call the value fractional. 1e-1000000 is ten bytes and
+		// roughly 3 MB of allocation, the same amplification the positive branch exists
+		// to refuse, reached through the denominator instead of the numerator.
+		//
+		// The mantissa is deliberately NOT charged against that denominator budget, and
+		// that is the one asymmetry between the signs. For a positive exponent the
+		// expanded numerator is len(mantissa)+exponent digits, so summing them measures
+		// the work. For a negative one the mantissa's digits are not amplification at
+		// all — they are already on the wire, byte for byte — and the quotient is never
+		// longer than the mantissa, so summing them measures nothing and refuses
+		// ordinary integers: "1" followed by 512 zeros, times 10^-512, is the integer 1
+		// and 518 bytes on the wire, and the sum called it 1025 digits and rejected it.
+		// The two are therefore bounded independently, which also means this branch
+		// refuses nothing the bound accepted before the sign was counted at all.
+		if len(mantissa) > maxSeriesIDDigits {
+			return false
+		}
+		// What is left is a non-zero mantissa (the zero case returned above) under an
+		// exponent past the budget, and every such literal is fractional: the mantissa's
+		// value is under 10^len(mantissa) <= 10^maxSeriesIDDigits < 10^|exponent|, so
+		// 10^|exponent| cannot divide it and IsInt would refuse it anyway. Refusing here
+		// only changes which error comes back — never whether one does — and saves the
+		// expansion that producing the other error would cost.
+		return exponent >= -maxSeriesIDDigits
 	}
 	return len(mantissa)+exponent <= maxSeriesIDDigits
+}
+
+// seriesIDMantissaIsZero reports whether a JSON number's mantissa carries no non-zero
+// digit — "0", "000", "0.0" and "-0" all qualify. Such a literal is the integer 0 for any
+// exponent of either sign, so no expansion can follow it; see the head of
+// seriesIDWithinDigitBound for why that is the one shape exempt from the magnitude bound.
+//
+// It scans for a digit rather than comparing against "0" because the wire spelling is the
+// producer's: json.Number hands over whatever was written, sign, point and all.
+func seriesIDMantissaIsZero(mantissa string) bool {
+	for i := 0; i < len(mantissa); i++ {
+		if mantissa[i] >= '1' && mantissa[i] <= '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s SeriesID) MarshalJSON() ([]byte, error) {
