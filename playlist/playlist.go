@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strconv"
+	"strings"
 
 	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
@@ -234,7 +237,7 @@ type DisplayPrefs struct {
 	Autoplay   *bool           `json:"autoplay,omitempty"`
 	Loop       *bool           `json:"loop,omitempty"`
 	// ImageRendering is "auto" (let the player smooth) or "pixelated"
-	// (nearest-neighbour, hard pixel edges — pixel art and bitmaps).
+	// (nearest-neighbor, hard pixel edges — pixel art and bitmaps).
 	// Independent of Scaling, which decides how the artwork fits.
 	ImageRendering string            `json:"imageRendering,omitempty"`
 	Interaction    *InteractionPrefs `json:"interaction,omitempty"`
@@ -318,6 +321,9 @@ func (s *SeriesID) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &str); err != nil {
 			return fmt.Errorf("seriesId: %w", err)
 		}
+		if !seriesIDDigits(str) {
+			return fmt.Errorf("seriesId: string form must be decimal digits, got %q", str)
+		}
 		*s = SeriesID(str)
 		return nil
 	}
@@ -325,8 +331,102 @@ func (s *SeriesID) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &num); err != nil {
 		return fmt.Errorf("seriesId: must be an integer or a decimal string: %w", err)
 	}
-	*s = SeriesID(num.String())
+	lit := num.String()
+	// Fast path: a bare run of digits is already canonical, because JSON forbids a
+	// leading zero in a number. Taking it keeps every ordinary id away from big.Rat, so
+	// the bound below only ever constrains spellings no producer emits.
+	if seriesIDDigits(lit) {
+		*s = SeriesID(lit)
+		return nil
+	}
+	// Anything else — an exponent, a decimal point, a sign — needs big.Rat to be read
+	// exactly. json.Number keeps the wire's raw spelling, so 5e2 and 1E+3 would otherwise
+	// survive as-is and Marshal would re-emit them as strings that fail the schema's own
+	// ^[0-9]+$ branch. big.Rat parses every JSON number spelling exactly, and
+	// IsInt + Num().String() both rejects a fractional value and yields plain digits —
+	// so the round trip is canonical whatever the producer wrote. big.Int alone would
+	// reject 5e2, and strconv.ParseFloat would lose precision on the very large ids
+	// SeriesID exists to carry.
+	if !seriesIDWithinDigitBound(lit) {
+		return fmt.Errorf("seriesId: integer too large, over %d digits: %s", maxSeriesIDDigits, lit)
+	}
+	rat, ok := new(big.Rat).SetString(lit)
+	if !ok || !rat.IsInt() {
+		return fmt.Errorf("seriesId: must be an integer or a decimal string, got %s", num.String())
+	}
+	canonical := rat.Num().String()
+	// IsInt admits negatives, which the schema's integer branch excludes via
+	// `minimum: 0`; the digit check below is what rejects them.
+	if !seriesIDDigits(canonical) {
+		return fmt.Errorf("seriesId: must be a non-negative integer, got %s", lit)
+	}
+	*s = SeriesID(canonical)
 	return nil
+}
+
+// seriesIDDigits reports whether v is the schema's own spelling of a series id:
+// `^[0-9]+$` — one or more digits, no sign, no point, not empty.
+//
+// Both wire branches funnel through it so a SeriesID decoded directly (json.Unmarshal
+// on a Playlist, which README documents as a supported path) can never hold a value
+// the validating ParseAndValidate* entrypoints would have refused. Without it the two
+// paths disagreed: "-5", "5.5", "" and the JSON number -5 all decoded cleanly here and
+// then re-marshaled as strings that fail the schema's oneOf on the way back out —
+// a document this SDK produced that this SDK rejects.
+func seriesIDDigits(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// maxSeriesIDDigits caps how many decimal digits an exponent-form seriesId may expand to.
+// 2^256-1 — the largest id the string form exists to carry at all — is 78 digits, so this
+// is more than an order of magnitude of headroom over anything a chain can mint.
+const maxSeriesIDDigits = 1024
+
+// seriesIDWithinDigitBound reports whether a JSON number literal expands to at most
+// maxSeriesIDDigits decimal digits, deciding it from the exponent alone — before big.Rat
+// is allowed to do the expansion.
+//
+// big.Rat.SetString's cost tracks the expanded digit count, not the literal's length, and
+// it expands before IsInt or any digit check can refuse the value. That makes a bound on
+// the literal's own length useless here: "1e1000000" is nine bytes and a megabyte of
+// digits, roughly 100000x amplification, and a document of a few tens of KB can hold
+// hundreds of them (the playlist schema puts no maxItems on items). The validating
+// entrypoints never reach this — internal/validate decodes to `any` first, where float64
+// rejects such a number outright — but Playlist and PlaylistItem are ordinary exported
+// structs, so a consumer that json.Unmarshals one directly, as ParseInlineManifest itself
+// does, would wear the cost.
+//
+// Only exponent-form and decimal-point spellings arrive here — a literal written out in
+// full took the digits fast path above and is never bounded, because it costs only as
+// much work as it costs bytes and because refusing it would make this decoder reject a
+// document the schema accepts (neither branch of the schema's oneOf carries a maxLength).
+// The bound is on amplification, not on magnitude.
+func seriesIDWithinDigitBound(lit string) bool {
+	mantissa, exponent := lit, 0
+	if i := strings.IndexAny(lit, "eE"); i >= 0 {
+		mantissa = lit[:i]
+		n, err := strconv.Atoi(lit[i+1:])
+		if err != nil {
+			// An exponent that does not even fit an int is far past the bound, and a
+			// malformed one is big.Rat's to reject — either way, not worth expanding.
+			return false
+		}
+		exponent = n
+	}
+	if exponent < 0 {
+		// A negative exponent only shrinks the value; big.Rat will reject it as
+		// fractional unless the mantissa absorbs it.
+		exponent = 0
+	}
+	return len(mantissa)+exponent <= maxSeriesIDDigits
 }
 
 func (s SeriesID) MarshalJSON() ([]byte, error) {
