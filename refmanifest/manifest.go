@@ -37,8 +37,18 @@ type Metadata struct {
 // Profile fields (Avatar, Biographies, Links) are the offline fallback, not
 // the source of truth; a consumer may overlay fresher registry data keyed by
 // Addresses.
+//
+// This is the decode target for the ref-manifest schema's Artist $def, which the
+// Entity consolidation turned into a $ref to $defs/Entity. Every field Entity gains
+// must therefore be mirrored here, or a document carrying it validates and then has
+// it silently dropped by json.Unmarshal — the schema says yes, the struct forgets.
+// The struct deliberately is not identity.Entity itself: aliasing a long-public type
+// is a separate, wider API change, so the two are kept field-for-field instead.
 type Artist struct {
 	Name string `json:"name"`
+	// Key is a verifiable identity in DID format. Informational only: signatures carry
+	// their own kid, and this field is never used to verify them.
+	Key string `json:"key,omitempty"`
 	// ID is an opaque, producer-scoped label. Not an identity.
 	ID string `json:"id,omitempty"`
 	// URL is the refVersion 1.0.0 single profile URL.
@@ -48,6 +58,14 @@ type Artist struct {
 	// to that entry. Consumers read Links first and fall back to URL only
 	// when Links is absent or empty.
 	URL string `json:"url,omitempty"`
+	// Role names the entity's function where its position does not already say it.
+	// Present because Artist is now a $ref to Entity: an entry in metadata.artists[]
+	// may spell out a role the position would otherwise imply. Omitted, the position
+	// decides. One of the schema's role enumeration values.
+	Role string `json:"role,omitempty"`
+	// Location is where the person or organization is based, free text (a city and
+	// country, typically) — not a structured address.
+	Location string `json:"location,omitempty"`
 	// Addresses holds raw wallet addresses (EVM 0x…, Tezos tz1…tz4). Contract
 	// addresses (Tezos KT1…, EVM collection contracts) name a collection, not
 	// a person, and must not be listed — they belong in provenance.contract.
@@ -71,13 +89,31 @@ type Biography struct {
 	SourceURL string `json:"sourceUrl,omitempty"`
 }
 
-// Link is an external profile link.
+// Link is an external link: an entity's profile link (website, publication) or, via
+// the same $def, editorial content attached to a playlist (article, event, news).
+//
+// Title/Date/Thumbnail/Authors are the dp1#55 additions on top of the original
+// Type+URL pair. They are mirrored here for the same reason Artist mirrors Entity:
+// metadata.artists[].links[] resolves to this one Link $def, so a field missing from
+// the struct is a field the schema accepts and the decode throws away.
 type Link struct {
 	// Type is one of the LinkType* constants; the schema rejects anything else.
 	Type string `json:"type"`
 	// URL is always a full URL, never a bare handle, so players carry no
 	// per-network URL rules.
 	URL string `json:"url"`
+	// Title is a human-readable label for the destination, such as a publication or
+	// article title.
+	Title string `json:"title,omitempty"`
+	// Date is an RFC3339 timestamp the linked content refers to (an article's publish
+	// date, an event's start), not when this Link entry itself was written.
+	Date string `json:"date,omitempty"`
+	// Thumbnail is a representative image for the destination, the same shape used
+	// everywhere else in DP-1.
+	Thumbnail *Thumbnail `json:"thumbnail,omitempty"`
+	// Authors credits who wrote or presented the linked content, the way Artists
+	// credits a work — the schema types them as full entities, hence Artist here.
+	Authors []Artist `json:"authors,omitempty"`
 }
 
 // Link types accepted by the schema's links[].type enumeration. A destination
@@ -86,7 +122,15 @@ const (
 	LinkTypeWebsite   = "website"
 	LinkTypeTwitter   = "twitter"
 	LinkTypeInstagram = "instagram"
-	LinkTypeOther     = "other"
+	// Profile is the producer's own page about the entity; Publication is writing by or
+	// about it. Article, Event and News are editorial content about a playlist. All five
+	// arrived with dp1#55 and are listed so this block stays the schema's full enumeration.
+	LinkTypeProfile     = "profile"
+	LinkTypePublication = "publication"
+	LinkTypeArticle     = "article"
+	LinkTypeEvent       = "event"
+	LinkTypeNews        = "news"
+	LinkTypeOther       = "other"
 )
 
 // Thumbnail references a preview image.

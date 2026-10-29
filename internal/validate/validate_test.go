@@ -268,6 +268,15 @@ func TestPlaylistWithPlaylistsExtension_validationFailures(t *testing.T) {
 		{"items_empty_no_dynamic_query", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[],%s}`, playlistSigBlock)},
 		{"note_text_empty", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","note":{"text":""},"items":[{"source":"https://a"}],%s}`, playlistSigBlock)},
 		{"item_note_duration_zero", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","note":{"text":"x","duration":0}}],%s}`, playlistSigBlock)},
+		// imageRendering and seriesId are the two core-schema constraints dp1#55 added that
+		// the Go types cannot enforce on their own: DisplayPrefs.ImageRendering is a plain
+		// string, and SeriesID's own UnmarshalJSON only sees the value after the schema has
+		// already passed it. Without a case here, a schema edit could drop either constraint
+		// with every Go-level test still green.
+		{"item_display_imageRendering_invalid", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","display":{"imageRendering":"smooth"}}],%s}`, playlistSigBlock)},
+		{"seriesId_negative", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","provenance":{"type":"onChain","contract":{"seriesId":-1}}}],%s}`, playlistSigBlock)},
+		{"seriesId_non_digit_string", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","provenance":{"type":"onChain","contract":{"seriesId":"12a"}}}],%s}`, playlistSigBlock)},
+		{"seriesId_fractional", fmt.Sprintf(`{"dpVersion":"1.1.0","title":"x","items":[{"source":"https://a","provenance":{"type":"onChain","contract":{"seriesId":1.5}}}],%s}`, playlistSigBlock)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
