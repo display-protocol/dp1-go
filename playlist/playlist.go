@@ -400,14 +400,15 @@ const maxSeriesIDDigits = 1024
 // digits, roughly 100000x amplification, and a document of a few tens of KB can hold
 // hundreds of them (the playlist schema puts no maxItems on items).
 //
-// No path inside this module reaches the bound: everything that decodes a Playlist or a
-// PlaylistItem from untrusted bytes validates first — the ParseAndValidate* entrypoints,
-// and resolveDynamicQuery, which schema-checks each item before unmarshaling it — and
-// internal/validate decodes to `any`, where float64 rejects such a literal outright. The
-// bound exists for the one path that has no validator in front of it: Playlist and
-// PlaylistItem are ordinary exported structs and README documents decoding them with a
-// bare json.Unmarshal as supported, so a consumer taking that route would otherwise wear
-// the cost. Do not delete this on the grounds that nothing in the repo calls it.
+// The validated entrypoints do not make this bound redundant, and the comment that once
+// said they did was wrong in the direction that matters. internal/validate decodes to
+// `any` without UseNumber, and encoding/json is asymmetric there: an OVERFLOWING literal
+// (1e400) errors out, but an UNDERFLOWING one (1e-1000000) becomes float64 0 with no
+// error at all. Schema validation therefore passes it, and ParseAndValidate* then
+// unmarshals the original bytes into the Go types — so this bound is reached on the
+// primary documented path, not only on the bare-json.Unmarshal path that Playlist and
+// PlaylistItem also support as exported structs. Do not delete this on the grounds that
+// a validator runs first.
 //
 // Only exponent-form and decimal-point spellings arrive here — a literal written out in
 // full took the digits fast path above and is never bounded, because it costs only as
@@ -428,15 +429,28 @@ func seriesIDWithinDigitBound(lit string) bool {
 		}
 		exponent = n
 	}
+	// Compare the exponent's magnitude against the bound BEFORE any arithmetic on it.
+	// Both the negation and the addition below would otherwise overflow int on a
+	// literal that names an exponent near the type's limits, and signed overflow in Go
+	// wraps rather than traps: -math.MinInt is math.MinInt again, so negating would
+	// leave a hugely negative value that satisfies `<= maxSeriesIDDigits` and admit the
+	// literal; math.MaxInt + len(mantissa) wraps negative and does the same. Rejecting
+	// first is what makes the guard total — `1e-9223372036854775808` and
+	// `1e9223372036854775807` are both ~23 bytes.
+	//
+	// A negative exponent shrinks the VALUE but not the work, which is why its
+	// magnitude counts the same as a positive one's: big.Rat holds
+	// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
+	// denominator before IsInt can call the value fractional and reject it.
+	// 1e-1000000 is ten bytes and roughly 3 MB of allocation — the same
+	// amplification the positive branch exists to refuse, reached through the
+	// denominator instead of the numerator. Bound on the magnitude either way;
+	// a negative exponent the mantissa really does absorb (1500e-2 is 15) is
+	// small, so it still passes.
+	if exponent < -maxSeriesIDDigits || exponent > maxSeriesIDDigits {
+		return false
+	}
 	if exponent < 0 {
-		// A negative exponent shrinks the VALUE but not the work: big.Rat holds
-		// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
-		// denominator before IsInt can call the value fractional and reject it.
-		// 1e-1000000 is ten bytes and roughly 3 MB of allocation — the same
-		// amplification the positive branch exists to refuse, reached through the
-		// denominator instead of the numerator. Bound on the magnitude either way;
-		// a negative exponent the mantissa really does absorb (1500e-2 is 15) is
-		// small, so it still passes.
 		exponent = -exponent
 	}
 	return len(mantissa)+exponent <= maxSeriesIDDigits

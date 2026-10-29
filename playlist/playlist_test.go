@@ -211,6 +211,34 @@ func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
 	}
 }
 
+// An exponent at either end of int must be refused by the bound itself, not by whatever
+// runs after it. Go's signed overflow wraps rather than traps, so arithmetic on the
+// parsed exponent before it is range-checked silently admits the literal:
+// -math.MinInt64 is math.MinInt64 again, and math.MaxInt64 + len(mantissa) wraps
+// negative — both then satisfy `<= maxSeriesIDDigits`.
+//
+// This asserts the bound's own return value and deliberately not an allocation, because
+// there is no allocation to measure: big.Rat.SetString refuses an exponent this large on
+// its own, for about 1.5 KB, so a bypass here costs nothing today. That is exactly why it
+// needs a test of its own — the guard is currently correct only by accident of big.Rat's
+// internal limit, and nothing would notice if that limit moved. Severity is low on its
+// own; the test is cheap and the guard should be total.
+func TestSeriesID_BoundRefusesExponentsAtIntLimits(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{`1e9223372036854775807`, `1e-9223372036854775808`} {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			if seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound admitted %q (%d bytes); the exponent overflowed int before the comparison", in, len(in))
+			}
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err == nil {
+				t.Fatalf("decoded %q as %q, want an error", in, got)
+			}
+		})
+	}
+}
+
 // A negative exponent the mantissa really does absorb is an ordinary integer and must
 // keep decoding: bounding on the exponent's magnitude must not turn 1500e-2 into an
 // error just because the sign is now counted.

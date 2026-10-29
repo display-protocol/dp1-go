@@ -16,6 +16,19 @@ compatibility; every break is listed here with the migration.
   instead of the numerator. The bound now reads the exponent's magnitude and ignores its sign.
   A negative exponent the mantissa genuinely absorbs (`1500e-2` is `15`) is small and still
   decodes. Reported against a feed built on v0.7.0.
+- `playlist.SeriesID`'s digit bound is now total at the limits of `int`. It range-checked the
+  exponent only after arithmetic on it, and Go's signed overflow wraps: `-math.MinInt64` is
+  `math.MinInt64` again, and `math.MaxInt64 + len(mantissa)` wraps negative, so either limit
+  satisfied the bound and passed the literal through. No amplification was reachable that way —
+  `big.Rat.SetString` refuses an exponent that large on its own, for about 1.5 KB — so this was
+  a guard correct only by accident of another package's internal limit. The range check now
+  runs before the arithmetic.
+- The doc comment on that bound claimed no path inside the module reaches it because the
+  `ParseAndValidate*` entrypoints validate first. That is false for underflow: `internal/validate`
+  decodes to `any` without `UseNumber`, and `encoding/json` errors on an overflowing literal
+  (`1e400`) but turns an underflowing one into `float64 0` silently. Schema validation passes such
+  a document and the decode that follows reaches the bound, so it guards the primary entrypoint,
+  not merely a bare `json.Unmarshal`.
 
 ## v0.7.0 — 2026-10-29
 
