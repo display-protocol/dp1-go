@@ -218,6 +218,39 @@ func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
 	}
 }
 
+// The negative branch bounds the mantissa's own length as well as the exponent's
+// magnitude, and that half of it is what keeps the branch from accepting more than the
+// base branch did. A mantissa over the budget is refused whatever its exponent absorbs:
+// "1" followed by 1024 zeros times 10^-512 is an ordinary 513-digit integer, and it was
+// refused on v0.7.0 too (the mantissa alone was already over 1024), so it stays refused.
+//
+// The accepted case sits one character under the limit, so the two together pin the
+// boundary rather than just one side of it. Without this test the length check is the one
+// line of the guard no case reaches, and a fix that dropped it would look green.
+func TestSeriesID_BoundsMantissaLengthUnderNegativeExponent(t *testing.T) {
+	t.Parallel()
+	atLimit := "1" + strings.Repeat("0", 1023) + "e-512"   // 1024 mantissa characters
+	overLimit := "1" + strings.Repeat("0", 1024) + "e-512" // 1025 — one too many
+
+	if !seriesIDWithinDigitBound(atLimit) {
+		t.Fatalf("bound refused a %d-character mantissa; the limit is %d", len(atLimit)-5, maxSeriesIDDigits)
+	}
+	var got SeriesID
+	if err := json.Unmarshal([]byte(atLimit), &got); err != nil {
+		t.Fatalf("a 1024-character mantissa under 10^-512 is an integer and must decode: %v", err)
+	}
+	if want := "1" + strings.Repeat("0", 511); string(got) != want {
+		t.Fatalf("decoded to %d digits, want %d", len(got), len(want))
+	}
+
+	if seriesIDWithinDigitBound(overLimit) {
+		t.Fatalf("bound admitted a %d-character mantissa; the limit is %d", len(overLimit)-5, maxSeriesIDDigits)
+	}
+	if err := json.Unmarshal([]byte(overLimit), &got); err == nil {
+		t.Fatalf("decoded a %d-character mantissa, want an error", len(overLimit)-5)
+	}
+}
+
 // A zero mantissa is the integer 0 however large its exponent, on either sign, and the
 // bound accepts it without consulting the magnitude at all. That is safe only because
 // big.Rat declines to do the work: SetString returns at its own zero check before any
