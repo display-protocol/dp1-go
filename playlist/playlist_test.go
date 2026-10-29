@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/display-protocol/dp1-go/extension/contentrating"
+	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/extension/playlists"
 )
 
@@ -27,7 +28,7 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 			{
 				Source:  "https://a",
 				License: "token",
-				Display: &DisplayPrefs{Scaling: "fill"},
+				Display: &DisplayPrefs{Scaling: "fill", ImageRendering: "pixelated"},
 				Note:    &playlists.Note{Text: "Item card"},
 				Provenance: &ProvenanceBlock{
 					Type: ProvenanceOnChain,
@@ -59,6 +60,213 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Items[0].Note == nil || out.Items[0].Note.Text != "Item card" {
 		t.Fatalf("item note: %+v", out.Items[0].Note)
+	}
+	if out.Items[0].Display == nil || out.Items[0].Display.ImageRendering != "pixelated" {
+		t.Fatalf("item display imageRendering: %+v", out.Items[0].Display)
+	}
+}
+
+// TestSeriesID_AcceptsIntOrDecimalString locks in the schema's oneOf [integer, string]
+// for provenance.contract.seriesId: small ids are commonly sent as a JSON number, large
+// ones (beyond float64's exact range) as a decimal string — both must decode, and the
+// type always re-marshals as a string (schema-valid either way, and never risks the
+// precision loss a round-tripped large integer would).
+func TestSeriesID_AcceptsIntOrDecimalString(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		json string
+		want SeriesID
+	}{
+		{"small integer", `5`, "5"},
+		{"zero", `0`, "0"},
+		{"decimal string", `"115792089237316195423570985008687907853269984665640564039457584007913129639935"`, "115792089237316195423570985008687907853269984665640564039457584007913129639935"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(tc.json), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+			b, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(b) != `"`+string(tc.want)+`"` {
+				t.Fatalf("marshal: got %s", b)
+			}
+		})
+	}
+}
+
+// TestSeriesID_RejectsNonDigits is the negative half of the test above. The schema's
+// oneOf is `{integer, minimum 0}` or `{string, ^[0-9]+$}`, and UnmarshalJSON is reachable
+// without the schema — a caller that json.Unmarshals a Playlist directly, which README
+// documents as supported. If the two disagree, this SDK decodes a value it would itself
+// refuse to validate and re-emits it as a string that fails the oneOf: a document it
+// produced and rejects. Each case below decoded cleanly before the digit guard.
+func TestSeriesID_RejectsNonDigits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		json string
+	}{
+		{"negative string", `"-5"`},
+		{"negative number", `-5`},
+		{"fractional string", `"5.5"`},
+		{"fractional number", `5.5`},
+		{"empty string", `""`},
+		{"non-numeric string", `"abc"`},
+		{"hex string", `"0x10"`},
+		{"leading plus", `"+5"`},
+		{"whitespace padded", `" 5 "`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(tc.json), &got); err == nil {
+				t.Fatalf("decoded %s as %q, want an error", tc.json, got)
+			}
+		})
+	}
+}
+
+// TestSeriesID_RejectsExponentBlowup locks the digit bound that keeps SeriesID's big.Rat
+// path from turning a tiny document into seconds of CPU and a gigabyte of allocation.
+//
+// The assertion is an error, not a deadline, and that is deliberate: a timing assertion
+// would be flaky, while an error is proof on its own. Every literal below IS a
+// non-negative integer, so if big.Rat were still reached it would expand the value,
+// IsInt would hold, the digits would pass seriesIDDigits, and Unmarshal would return
+// nil. An error can therefore only come from the bound refusing the literal first.
+//
+// Note what does not work: bounding the literal's own length. "1e1000000" is nine bytes.
+func TestSeriesID_RejectsExponentBlowup(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`1e1000000`,
+		`1e2000`,
+		`1E+5000`,
+		`1e99999999999999999999`, // exponent itself overflows an int
+	}
+	for _, in := range cases {
+		t.Run(in[:min(len(in), 24)], func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err == nil {
+				t.Fatalf("decoded a %d-byte literal as %d digits, want an error", len(in), len(got))
+			}
+		})
+	}
+}
+
+// The bound must not cost a real id its place: 2^256-1 is the largest value the string
+// form exists for, and the equivalent exponent spellings stay well inside it.
+func TestSeriesID_AcceptsLargeRealisticIDs(t *testing.T) {
+	t.Parallel()
+	const max256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+	var got SeriesID
+	if err := json.Unmarshal([]byte(`"`+max256+`"`), &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != max256 {
+		t.Fatalf("got %q", got)
+	}
+	// 1e1000 expands to 1001 digits, just inside maxSeriesIDDigits — the boundary is
+	// above anything a chain mints, not just above the test fixtures.
+	if err := json.Unmarshal([]byte(`1e1000`), &got); err != nil {
+		t.Fatalf("1e1000 must stay inside the bound: %v", err)
+	}
+	if len(got) != 1001 {
+		t.Fatalf("1e1000 expanded to %d digits", len(got))
+	}
+	// A long literal written out in full is deliberately NOT bounded, unlike the
+	// exponent form: it costs only as much work as it costs bytes, so there is nothing
+	// to amplify, and refusing it would make this decoder reject documents the schema
+	// accepts — neither branch of the schema's oneOf carries a maxLength. The string
+	// form below is unbounded for the same reason and must stay that way.
+	long := "9" + strings.Repeat("0", 2000)
+	if err := json.Unmarshal([]byte(long), &got); err != nil {
+		t.Fatalf("a written-out literal must not hit the exponent bound: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`"`+long+`"`), &got); err != nil {
+		t.Fatalf("the string form must stay unbounded: %v", err)
+	}
+}
+
+// Exponent spellings are a JSON number the schema's integer branch accepts, so they must
+// survive the digit guard added for the negatives above — the guard runs on the
+// canonicalized digits, not on the producer's raw spelling.
+func TestSeriesID_CanonicalizesExponentForms(t *testing.T) {
+	t.Parallel()
+	cases := map[string]SeriesID{`5e2`: "500", `1E+3`: "1000", `5.0`: "5"}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("got %q want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestPlaylist_OpenAtAndLinks locks in dp1#55: OpenAt is a playlist-level fact distinct
+// from item-level DisplayAt scheduling (TestPlaylist_DisplayAt below exercises that one),
+// and Links/curators carry the fuller Entity shape (role/location/addresses/avatar/
+// biographies/links), not just name+key+url.
+func TestPlaylist_OpenAtAndLinks(t *testing.T) {
+	t.Parallel()
+	p := Playlist{
+		DPVersion: "1.1.0",
+		Title:     "T",
+		Items:     []PlaylistItem{{Source: "https://a", License: "token"}},
+		OpenAt:    "2026-07-21T18:00:00-04:00",
+		Curators: []identity.Entity{{
+			Name:        "A Curator",
+			Key:         "did:key:z6Mk",
+			Role:        "curator",
+			Location:    "New York, USA",
+			Addresses:   []string{"0xabc"},
+			Avatar:      &identity.Thumbnail{URI: "https://a/avatar.png"},
+			Biographies: []identity.Biography{{Text: "Bio text"}},
+			Links:       []identity.Link{{Type: identity.LinkTypeWebsite, URL: "https://a"}},
+		}},
+		Links: []identity.Link{{
+			Type:    identity.LinkTypeArticle,
+			URL:     "https://press.example/review",
+			Title:   "A review",
+			Date:    "2026-07-20T00:00:00Z",
+			Authors: []identity.Entity{{Name: "A Writer"}},
+		}},
+	}
+	b, err := json.Marshal(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Playlist
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.OpenAt != p.OpenAt {
+		t.Fatalf("openAt: got %q want %q", out.OpenAt, p.OpenAt)
+	}
+	if len(out.Curators) != 1 || out.Curators[0].Role != "curator" || out.Curators[0].Location != "New York, USA" {
+		t.Fatalf("curator: %+v", out.Curators)
+	}
+	if len(out.Curators[0].Biographies) != 1 || out.Curators[0].Biographies[0].Text != "Bio text" {
+		t.Fatalf("curator biographies: %+v", out.Curators[0].Biographies)
+	}
+	if len(out.Links) != 1 || out.Links[0].Title != "A review" || len(out.Links[0].Authors) != 1 {
+		t.Fatalf("playlist links: %+v", out.Links)
 	}
 }
 

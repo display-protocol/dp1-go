@@ -195,6 +195,12 @@
           "description": "Repeat automatically",
           "default": true
         },
+        "imageRendering": {
+          "type": "string",
+          "description": "How raster images are resampled when scaled. \"pixelated\" keeps hard pixel edges (nearest-neighbour), for pixel art and bitmaps; \"auto\" lets the player smooth. Independent of scaling, which decides how the artwork fits",
+          "enum": ["auto", "pixelated"],
+          "default": "auto"
+        },
         "interaction": {
           "type": "object",
           "properties": {
@@ -316,9 +322,11 @@
               "description": "Contract address"
             },
             "seriesId": {
-              "type": "integer",
-              "description": "Series identifier",
-              "minimum": 0
+              "description": "Series identifier within the contract. An integer when the contract numbers its series with small values; a decimal string when the identifier is too large for a JSON number to hold exactly (for example a 256-bit id), the same reason tokenId is a string",
+              "oneOf": [
+                {"type": "integer", "minimum": 0},
+                {"type": "string", "pattern": "^[0-9]+$"}
+              ]
             },
             "tokenId": {
               "type": "string",

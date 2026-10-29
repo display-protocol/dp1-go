@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -147,6 +148,119 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension(t *testing.T) {
 	}
 	if len(out.Items) != 1 || out.Items[0].Note == nil || out.Items[0].Note.Text != "Track intro" {
 		t.Fatalf("item: %+v", out.Items)
+	}
+}
+
+// TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity locks in dp1#55
+// end to end through the real embedded JSON Schema (not just the Go struct round trip
+// playlist_test.go covers): openAt, playlist-level links, and curators carrying the full
+// Entity shape (role/location/addresses/avatar/biographies/links) must all validate, not
+// just decode. This is exactly the shape a real exhibition document, with curator and
+// artist profiles, needs the feed to accept.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	kid, err := sign.Ed25519DIDKey(priv.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl := playlist.Playlist{
+		DPVersion: "1.1.0",
+		Title:     "Ext",
+		Items:     []playlist.PlaylistItem{{Source: "https://a"}},
+		OpenAt:    "2026-10-01T18:00:00-04:00",
+		Curators: []identity.Entity{{
+			Name:        "Alice",
+			Key:         kid,
+			Role:        "curator",
+			Location:    "Brooklyn, USA",
+			Addresses:   []string{"0xabc"},
+			Avatar:      &identity.Thumbnail{URI: "https://a/avatar.png"},
+			Biographies: []identity.Biography{{Text: "Curator bio"}},
+			Links:       []identity.Link{{Type: identity.LinkTypeWebsite, URL: "https://alice.example"}},
+		}},
+		Links: []identity.Link{{
+			Type:  identity.LinkTypeArticle,
+			URL:   "https://press.example/review",
+			Title: "A review",
+		}},
+	}
+	body, _ := json.Marshal(pl)
+	sig, _ := sign.SignMultiEd25519(body, priv, playlist.RoleCurator, "2026-10-01T12:00:00Z")
+	pl.Signatures = []playlist.Signature{sig}
+	signed, _ := json.Marshal(pl)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.OpenAt != pl.OpenAt {
+		t.Fatalf("openAt: got %q want %q", out.OpenAt, pl.OpenAt)
+	}
+	if len(out.Curators) != 1 || out.Curators[0].Role != "curator" || out.Curators[0].Location != "Brooklyn, USA" {
+		t.Fatalf("curator: %+v", out.Curators)
+	}
+	if len(out.Links) != 1 || out.Links[0].Title != "A review" {
+		t.Fatalf("links: %+v", out.Links)
+	}
+}
+
+// TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema drives the two
+// dp1#55 core-schema fields through the real embedded schema rather than through Go
+// types alone, in both of seriesId's wire forms.
+//
+// The Go-level tests in playlist/ cannot stand in for this: ImageRendering is a plain
+// string, so only the schema's enum constrains it, and SeriesID.UnmarshalJSON only ever
+// sees a value the schema has already let through — validation runs before decode. A
+// schema edit that dropped either constraint would leave every one of those tests green.
+//
+// It uses dummySignatureJSON rather than signing: a raw document is the only way to put
+// an integer seriesId on the wire, since SeriesID always marshals as a string.
+func TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema(t *testing.T) {
+	t.Parallel()
+	// 2^256-1, well past float64's exact range — the reason the string form exists.
+	const bigSeries = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+	cases := []struct {
+		name     string
+		seriesID string // raw JSON, so an unquoted integer is expressible
+		want     playlist.SeriesID
+	}{
+		{"integer wire form", `512`, "512"},
+		{"decimal string wire form", `"` + bigSeries + `"`, playlist.SeriesID(bigSeries)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(fmt.Sprintf(`{
+				"dpVersion": "1.1.0",
+				"title": "Pixel art",
+				"items": [{
+					"source": "https://a",
+					"display": {"imageRendering": "pixelated"},
+					"provenance": {"type": "onChain", "contract": {"chain": "evm", "seriesId": %s}}
+				}],
+				"signatures": [%s]
+			}`, tc.seriesID, dummySignatureJSON))
+			out, err := dp1.ParseAndValidatePlaylist(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Items[0].Display == nil || out.Items[0].Display.ImageRendering != "pixelated" {
+				t.Fatalf("imageRendering: %+v", out.Items[0].Display)
+			}
+			got := out.Items[0].Provenance.Contract.SeriesID
+			if got == nil || *got != tc.want {
+				t.Fatalf("seriesId: got %v want %q", got, tc.want)
+			}
+			// Re-marshaling normalizes the integer form to a string; the schema's oneOf
+			// accepts both, so the document this SDK emits must still validate.
+			round, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := dp1.ParseAndValidatePlaylist(round); err != nil {
+				t.Fatalf("re-marshaled playlist no longer validates: %v", err)
+			}
+		})
 	}
 }
 
@@ -443,6 +557,71 @@ func TestParseAndValidateRefManifest(t *testing.T) {
 	}
 	if out.Metadata.Title != "Work" {
 		t.Fatal(out.Metadata.Title)
+	}
+}
+
+// TestParseAndValidateRefManifest_artistCarriesFullEntity is the round-trip half of the
+// Entity consolidation: the ref-manifest schema's Artist $def is a $ref to $defs/Entity,
+// so an artist may carry key/role/location and its links[] may carry
+// title/date/thumbnail/authors. Validation alone proves nothing here — the regression
+// this locks in is the decode step dropping fields the schema had just accepted, which a
+// test that only checks err == nil would pass while the data silently vanished. So the
+// assertions read the fields back off the decoded manifest.
+func TestParseAndValidateRefManifest_artistCarriesFullEntity(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{
+		"refVersion": "0.1.0",
+		"id": "ref-entity",
+		"created": "2025-06-01T12:00:00Z",
+		"locale": "en",
+		"metadata": {
+			"title": "Work",
+			"artists": [{
+				"name": "A",
+				"key": "did:key:z6MkArtist",
+				"role": "artist",
+				"location": "Lisbon, Portugal",
+				"links": [{
+					"type": "article",
+					"url": "https://press.example/piece",
+					"title": "On the work",
+					"date": "2026-02-01T00:00:00Z",
+					"thumbnail": {"uri": "https://press.example/cover.jpg"},
+					"authors": [{"name": "A Critic", "role": "other"}]
+				}]
+			}]
+		}
+	}`)
+	out, err := dp1.ParseAndValidateRefManifest(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := out.Metadata.Artists[0]
+	if a.Key != "did:key:z6MkArtist" || a.Role != "artist" || a.Location != "Lisbon, Portugal" {
+		t.Fatalf("artist entity fields dropped on decode: %+v", a)
+	}
+	l := a.Links[0]
+	if l.Title != "On the work" || l.Date != "2026-02-01T00:00:00Z" {
+		t.Fatalf("link title/date dropped on decode: %+v", l)
+	}
+	if l.Thumbnail == nil || l.Thumbnail.URI != "https://press.example/cover.jpg" {
+		t.Fatalf("link thumbnail dropped on decode: %+v", l.Thumbnail)
+	}
+	if len(l.Authors) != 1 || l.Authors[0].Name != "A Critic" {
+		t.Fatalf("link authors dropped on decode: %+v", l.Authors)
+	}
+	// Re-marshaling must still validate: a field decoded but not re-emitted is the same
+	// data loss one step later.
+	round, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := dp1.ParseAndValidateRefManifest(round)
+	if err != nil {
+		t.Fatalf("re-marshaled manifest no longer validates: %v", err)
+	}
+	if back.Metadata.Artists[0].Location != "Lisbon, Portugal" {
+		t.Fatalf("location lost on re-marshal: %+v", back.Metadata.Artists[0])
 	}
 }
 

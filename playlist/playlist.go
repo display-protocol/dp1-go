@@ -2,8 +2,12 @@
 package playlist
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strconv"
+	"strings"
 
 	"github.com/display-protocol/dp1-go/extension/contentrating"
 	"github.com/display-protocol/dp1-go/extension/identity"
@@ -26,11 +30,22 @@ type Playlist struct {
 	// --- Registry extension: "playlists" (draft) — additive optional fields only ---
 	// These are not part of DP-1 core JSON Schema; they are validated only when using
 	// ParseAndValidatePlaylistWithPlaylistsExtension. Safe to omit for core-only documents.
-	Note         *playlists.Note         `json:"note,omitempty"`
-	Curators     []identity.Entity       `json:"curators,omitempty"`
-	Summary      string                  `json:"summary,omitempty"`
+	Note     *playlists.Note   `json:"note,omitempty"`
+	Curators []identity.Entity `json:"curators,omitempty"`
+	Summary  string            `json:"summary,omitempty"`
+	// OpenAt is when this playlist's own subject became public — an exhibition's
+	// opening, a collection's release. Reuses the DisplayAt wire shape for one consistent
+	// date format across DP-1, but is NOT displayAt Scheduling (§3.5 on PlaylistItem):
+	// that gates which items are eligible to play; OpenAt is a playlist-level fact for
+	// ordering and display only, and sets no eligibility, timer, or activation. Distinct
+	// from Created too, which is the document's own issuance time and churns on every
+	// re-export; OpenAt is the real-world event and does not (dp1#55).
+	OpenAt       string                  `json:"openAt,omitempty"`
 	CoverImage   string                  `json:"coverImage,omitempty"`
 	DynamicQuery *playlists.DynamicQuery `json:"dynamicQuery,omitempty"`
+	// Links is editorial content about the playlist (articles, events, news), in the
+	// order to show them — references only, the content itself stays at the URL (dp1#55).
+	Links []identity.Link `json:"links,omitempty"`
 }
 
 // Defaults holds playlist-level defaults inherited by items.
@@ -216,13 +231,17 @@ func (it PlaylistItem) ParseInlineManifest() (*refmanifest.Manifest, error) {
 
 // DisplayPrefs controls how a player renders an item (see DP-1 §4).
 type DisplayPrefs struct {
-	Scaling       string            `json:"scaling,omitempty"`
-	Margin        json.RawMessage   `json:"margin,omitempty"` // number or "%|vw|vh" string
-	Background    string            `json:"background,omitempty"`
-	Autoplay      *bool             `json:"autoplay,omitempty"`
-	Loop          *bool             `json:"loop,omitempty"`
-	Interaction   *InteractionPrefs `json:"interaction,omitempty"`
-	UserOverrides map[string]bool   `json:"userOverrides,omitempty"`
+	Scaling    string          `json:"scaling,omitempty"`
+	Margin     json.RawMessage `json:"margin,omitempty"` // number or "%|vw|vh" string
+	Background string          `json:"background,omitempty"`
+	Autoplay   *bool           `json:"autoplay,omitempty"`
+	Loop       *bool           `json:"loop,omitempty"`
+	// ImageRendering is "auto" (let the player smooth) or "pixelated"
+	// (nearest-neighbor, hard pixel edges — pixel art and bitmaps).
+	// Independent of Scaling, which decides how the artwork fits.
+	ImageRendering string            `json:"imageRendering,omitempty"`
+	Interaction    *InteractionPrefs `json:"interaction,omitempty"`
+	UserOverrides  map[string]bool   `json:"userOverrides,omitempty"`
 }
 
 // InteractionPrefs configures input (keyboard / mouse).
@@ -275,13 +294,148 @@ type ProvenanceBlock struct {
 
 // ProvenanceContract is contract-specific provenance data.
 type ProvenanceContract struct {
-	Chain    string `json:"chain,omitempty"`
-	Standard string `json:"standard,omitempty"`
-	Address  string `json:"address,omitempty"`
-	SeriesID *int   `json:"seriesId,omitempty"`
-	TokenID  string `json:"tokenId,omitempty"`
-	URI      string `json:"uri,omitempty"`
-	MetaHash string `json:"metaHash,omitempty"`
+	Chain    string    `json:"chain,omitempty"`
+	Standard string    `json:"standard,omitempty"`
+	Address  string    `json:"address,omitempty"`
+	SeriesID *SeriesID `json:"seriesId,omitempty"`
+	TokenID  string    `json:"tokenId,omitempty"`
+	URI      string    `json:"uri,omitempty"`
+	MetaHash string    `json:"metaHash,omitempty"`
+}
+
+// SeriesID is a provenance series identifier: an integer when the contract numbers its
+// series with small values, or a decimal string when the identifier is too large for a
+// JSON number to hold exactly (the same reason TokenID is a plain string) — the schema's
+// seriesId is `oneOf [integer, string]`. Unmarshal accepts either wire shape; Marshal
+// always re-emits a string, which satisfies that oneOf either way and never risks the
+// float64 precision loss a round-tripped large integer would.
+type SeriesID string
+
+func (s *SeriesID) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if string(trimmed) == "null" {
+		return nil
+	}
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return fmt.Errorf("seriesId: %w", err)
+		}
+		if !seriesIDDigits(str) {
+			return fmt.Errorf("seriesId: string form must be decimal digits, got %q", str)
+		}
+		*s = SeriesID(str)
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(b, &num); err != nil {
+		return fmt.Errorf("seriesId: must be an integer or a decimal string: %w", err)
+	}
+	lit := num.String()
+	// Fast path: a bare run of digits is already canonical, because JSON forbids a
+	// leading zero in a number. Taking it keeps every ordinary id away from big.Rat, so
+	// the bound below only ever constrains spellings no producer emits.
+	if seriesIDDigits(lit) {
+		*s = SeriesID(lit)
+		return nil
+	}
+	// Anything else — an exponent, a decimal point, a sign — needs big.Rat to be read
+	// exactly. json.Number keeps the wire's raw spelling, so 5e2 and 1E+3 would otherwise
+	// survive as-is and Marshal would re-emit them as strings that fail the schema's own
+	// ^[0-9]+$ branch. big.Rat parses every JSON number spelling exactly, and
+	// IsInt + Num().String() both rejects a fractional value and yields plain digits —
+	// so the round trip is canonical whatever the producer wrote. big.Int alone would
+	// reject 5e2, and strconv.ParseFloat would lose precision on the very large ids
+	// SeriesID exists to carry.
+	if !seriesIDWithinDigitBound(lit) {
+		return fmt.Errorf("seriesId: integer too large, over %d digits: %s", maxSeriesIDDigits, lit)
+	}
+	rat, ok := new(big.Rat).SetString(lit)
+	if !ok || !rat.IsInt() {
+		return fmt.Errorf("seriesId: must be an integer or a decimal string, got %s", num.String())
+	}
+	canonical := rat.Num().String()
+	// IsInt admits negatives, which the schema's integer branch excludes via
+	// `minimum: 0`; the digit check below is what rejects them.
+	if !seriesIDDigits(canonical) {
+		return fmt.Errorf("seriesId: must be a non-negative integer, got %s", lit)
+	}
+	*s = SeriesID(canonical)
+	return nil
+}
+
+// seriesIDDigits reports whether v is the schema's own spelling of a series id:
+// `^[0-9]+$` — one or more digits, no sign, no point, not empty.
+//
+// Both wire branches funnel through it so a SeriesID decoded directly (json.Unmarshal
+// on a Playlist, which README documents as a supported path) can never hold a value
+// the validating ParseAndValidate* entrypoints would have refused. Without it the two
+// paths disagreed: "-5", "5.5", "" and the JSON number -5 all decoded cleanly here and
+// then re-marshaled as strings that fail the schema's oneOf on the way back out —
+// a document this SDK produced that this SDK rejects.
+func seriesIDDigits(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// maxSeriesIDDigits caps how many decimal digits an exponent-form seriesId may expand to.
+// 2^256-1 — the largest id the string form exists to carry at all — is 78 digits, so this
+// is more than an order of magnitude of headroom over anything a chain can mint.
+const maxSeriesIDDigits = 1024
+
+// seriesIDWithinDigitBound reports whether a JSON number literal expands to at most
+// maxSeriesIDDigits decimal digits, deciding it from the exponent alone — before big.Rat
+// is allowed to do the expansion.
+//
+// big.Rat.SetString's cost tracks the expanded digit count, not the literal's length, and
+// it expands before IsInt or any digit check can refuse the value. That makes a bound on
+// the literal's own length useless here: "1e1000000" is nine bytes and a megabyte of
+// digits, roughly 100000x amplification, and a document of a few tens of KB can hold
+// hundreds of them (the playlist schema puts no maxItems on items).
+//
+// No path inside this module reaches the bound: everything that decodes a Playlist or a
+// PlaylistItem from untrusted bytes validates first — the ParseAndValidate* entrypoints,
+// and resolveDynamicQuery, which schema-checks each item before unmarshaling it — and
+// internal/validate decodes to `any`, where float64 rejects such a literal outright. The
+// bound exists for the one path that has no validator in front of it: Playlist and
+// PlaylistItem are ordinary exported structs and README documents decoding them with a
+// bare json.Unmarshal as supported, so a consumer taking that route would otherwise wear
+// the cost. Do not delete this on the grounds that nothing in the repo calls it.
+//
+// Only exponent-form and decimal-point spellings arrive here — a literal written out in
+// full took the digits fast path above and is never bounded, because it costs only as
+// much work as it costs bytes and because refusing it would make this decoder reject a
+// document the schema accepts (neither branch of the schema's oneOf carries a maxLength).
+// The bound is on amplification, not on magnitude.
+func seriesIDWithinDigitBound(lit string) bool {
+	mantissa, exponent := lit, 0
+	if i := strings.IndexAny(lit, "eE"); i >= 0 {
+		mantissa = lit[:i]
+		n, err := strconv.Atoi(lit[i+1:])
+		if err != nil {
+			// An exponent that does not even fit an int is far past the bound, and a
+			// malformed one is big.Rat's to reject — either way, not worth expanding.
+			return false
+		}
+		exponent = n
+	}
+	if exponent < 0 {
+		// A negative exponent only shrinks the value; big.Rat will reject it as
+		// fractional unless the mantissa absorbs it.
+		exponent = 0
+	}
+	return len(mantissa)+exponent <= maxSeriesIDDigits
+}
+
+func (s SeriesID) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(s))
 }
 
 // ProvenanceDep is documentary only; players must not fetch at runtime.

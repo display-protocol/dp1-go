@@ -1106,6 +1106,95 @@ func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
 	}
 }
 
+// TestResolveDynamicQuery_cloneIndependenceForEntityFields covers the fields dp1#55 added
+// to the cloned types: Playlist.Links, and the nested Addresses/Avatar/Biographies/Links
+// an Entity (a curator, or a link's author) now carries. ResolveDynamicQuery documents
+// that the receiver is not modified; before these were cloned, the returned playlist
+// shared their backing arrays with it, so a caller resolving one cached playlist per
+// request could corrupt the other's data with an ordinary append — silently, no error.
+//
+// Every assertion compares element addresses rather than values: equal values are what a
+// correct clone and an aliasing one both produce, so only identity distinguishes them.
+func TestResolveDynamicQuery_cloneIndependenceForEntityFields(t *testing.T) {
+	t.Parallel()
+	w, h := 64, 64
+	orig := &Playlist{
+		DPVersion: "1.1.0",
+		Title:     "t",
+		Items:     []PlaylistItem{{Source: "https://static"}},
+		Curators: []identity.Entity{{
+			Name:        "C",
+			Addresses:   []string{"0xabc"},
+			Avatar:      &identity.Thumbnail{URI: "https://a.example/c.jpg", W: &w, H: &h},
+			Biographies: []identity.Biography{{Text: "bio"}},
+			Links:       []identity.Link{{Type: identity.LinkTypeWebsite, URL: "https://c.example"}},
+		}},
+		Links: []identity.Link{{
+			Type:      identity.LinkTypeArticle,
+			URL:       "https://press.example/piece",
+			Thumbnail: &identity.Thumbnail{URI: "https://press.example/cover.jpg", W: &w},
+			Authors:   []identity.Entity{{Name: "A Critic", Addresses: []string{"0xdef"}}},
+		}},
+	}
+	out, err := orig.ResolveDynamicQuery(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if &out.Links[0] == &orig.Links[0] {
+		t.Fatal("expected cloned links slice")
+	}
+	if out.Links[0].Thumbnail == orig.Links[0].Thumbnail {
+		t.Fatal("expected cloned link thumbnail pointer")
+	}
+	if out.Links[0].Thumbnail.W == orig.Links[0].Thumbnail.W {
+		t.Fatal("expected cloned link thumbnail width pointer")
+	}
+	// A link's authors are entities in their own right, so the recursion must reach them.
+	if &out.Links[0].Authors[0] == &orig.Links[0].Authors[0] {
+		t.Fatal("expected cloned link authors slice")
+	}
+	if &out.Links[0].Authors[0].Addresses[0] == &orig.Links[0].Authors[0].Addresses[0] {
+		t.Fatal("expected cloned link author addresses")
+	}
+
+	oc, cc := &orig.Curators[0], &out.Curators[0]
+	if oc == cc {
+		t.Fatal("expected cloned curators slice")
+	}
+	if &cc.Addresses[0] == &oc.Addresses[0] {
+		t.Fatal("expected cloned curator addresses")
+	}
+	if cc.Avatar == oc.Avatar || cc.Avatar.W == oc.Avatar.W || cc.Avatar.H == oc.Avatar.H {
+		t.Fatal("expected cloned curator avatar and its dimension pointers")
+	}
+	if &cc.Biographies[0] == &oc.Biographies[0] {
+		t.Fatal("expected cloned curator biographies")
+	}
+	if &cc.Links[0] == &oc.Links[0] {
+		t.Fatal("expected cloned curator links")
+	}
+
+	// The failure the addresses above stand in for: an append through one document
+	// writing into the other's array.
+	cc.Addresses = append(cc.Addresses, "0x999")
+	oc.Addresses = append(oc.Addresses, "0x111")
+	if cc.Addresses[1] != "0x999" {
+		t.Fatalf("clone and receiver share a backing array: %+v", cc.Addresses)
+	}
+
+	// A nil slice must stay nil: clonePlaylist's output is re-marshaled and re-signed,
+	// and nil versus present-empty is a difference the JCS payload carries.
+	bare := &Playlist{DPVersion: "1.1.0", Title: "t", Items: []PlaylistItem{{Source: "https://s"}}}
+	bareOut, err := bare.ResolveDynamicQuery(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bareOut.Links != nil || bareOut.Curators != nil {
+		t.Fatalf("absent links/curators must stay nil: %+v %+v", bareOut.Links, bareOut.Curators)
+	}
+}
+
 // A present-empty contentReasons must survive resolve + re-serialize as `[]`, not `null`.
 // clonePlaylist runs on every ResolveDynamicQuery call including the no-dynamicQuery path, so a
 // clone that collapsed present-empty to nil would turn a valid rated playlist into one the
