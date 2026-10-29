@@ -3,7 +3,7 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased — v0.7.1
+## v0.7.1 — 2026-10-29
 
 ### Fixed
 
