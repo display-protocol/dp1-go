@@ -398,11 +398,16 @@ const maxSeriesIDDigits = 1024
 // it expands before IsInt or any digit check can refuse the value. That makes a bound on
 // the literal's own length useless here: "1e1000000" is nine bytes and a megabyte of
 // digits, roughly 100000x amplification, and a document of a few tens of KB can hold
-// hundreds of them (the playlist schema puts no maxItems on items). The validating
-// entrypoints never reach this — internal/validate decodes to `any` first, where float64
-// rejects such a number outright — but Playlist and PlaylistItem are ordinary exported
-// structs, so a consumer that json.Unmarshals one directly, as ParseInlineManifest itself
-// does, would wear the cost.
+// hundreds of them (the playlist schema puts no maxItems on items).
+//
+// No path inside this module reaches the bound: everything that decodes a Playlist or a
+// PlaylistItem from untrusted bytes validates first — the ParseAndValidate* entrypoints,
+// and resolveDynamicQuery, which schema-checks each item before unmarshaling it — and
+// internal/validate decodes to `any`, where float64 rejects such a literal outright. The
+// bound exists for the one path that has no validator in front of it: Playlist and
+// PlaylistItem are ordinary exported structs and README documents decoding them with a
+// bare json.Unmarshal as supported, so a consumer taking that route would otherwise wear
+// the cost. Do not delete this on the grounds that nothing in the repo calls it.
 //
 // Only exponent-form and decimal-point spellings arrive here — a literal written out in
 // full took the digits fast path above and is never bounded, because it costs only as
