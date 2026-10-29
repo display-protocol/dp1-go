@@ -3,6 +3,65 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased — v0.7.0
+
+Catches the SDK up with the DP-1 spec's Entity consolidation and
+[display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55), found by publishing a
+real exhibition corpus through a feed built on this module. A minor bump, not a patch: one field
+is retyped (see Changed).
+
+### Added
+
+- `playlist.Playlist.OpenAt` — when the playlist's own subject became public (an exhibition's
+  opening), distinct from `Created`, which is the document's issuance time, and from item-level
+  `DisplayAt` scheduling, which gates eligibility. `OpenAt` sets no eligibility, timer, or
+  activation (dp1#55).
+- `playlist.Playlist.Links` — editorial content about the playlist (articles, events, news), in
+  display order. `identity.Link` gains `Title`, `Date`, `Thumbnail`, and `Authors` for that use,
+  and its type enumeration gains `profile`, `publication`, `article`, `event`, and `news`.
+- `identity.Entity` gains `Role`, `Location`, `Addresses`, `Avatar`, `Biographies`, and `Links`.
+  Curators, publishers, and `metadata.artists[]` all name entities, and until now any of them
+  carrying one of these was rejected as an unknown field. `Key` is no longer required — the
+  spec's Entity requires only `name`, and a wallet-based publisher may hold no DID.
+- `refmanifest.Artist` gains `Key`, `Role`, and `Location`; `refmanifest.Link` gains `Title`,
+  `Date`, `Thumbnail`, and `Authors`. The ref-manifest schema's `Artist` is now a `$ref` to its
+  `Entity`, so without these a manifest carrying them would validate and then lose them on
+  decode. The Go struct keeps its own name and is not aliased to `identity.Entity`.
+- `playlist.DisplayPrefs.ImageRendering` (`auto` | `pixelated`), resolved by `merge` in the usual
+  precedence order. The ref-manifest `DisplayControls` has no counterpart, so a fetched manifest
+  cannot set or clear it.
+
+### Changed (breaking)
+
+**`playlist.ProvenanceContract.SeriesID`: `*int` → `*playlist.SeriesID`**
+
+The spec types `provenance.contract.seriesId` as `oneOf [integer, string]` — a decimal string for
+ids too large for a JSON number to hold exactly, the same reason `tokenId` is a string. With
+`*int`, half the wire format did not decode at all, and a 256-bit id could not be represented.
+
+`SeriesID` is a string type that accepts either wire shape on decode and always re-emits a
+string, which satisfies the `oneOf` either way and never risks the float64 precision loss a
+round-tripped large integer would.
+
+```go
+// before
+if c.SeriesID != nil { use(*c.SeriesID) }        // int
+
+// after
+if c.SeriesID != nil { use(string(*c.SeriesID)) } // decimal digits
+// numeric comparison, when you need one:
+n, err := strconv.ParseUint(string(*c.SeriesID), 10, 64)
+// constructing
+id := playlist.SeriesID("5")
+c := playlist.ProvenanceContract{SeriesID: &id}
+```
+
+Decode rejects anything the schema's own `oneOf` rejects — a sign, a decimal point, an empty or
+non-digit string — rather than accepting it and re-emitting a document this SDK would refuse to
+validate. An exponent-form literal is accepted and canonicalized (`5e2` → `"500"`) up to 1024
+expanded digits; past that it is refused, because the expansion is unbounded work an untrusted
+document would otherwise buy for a handful of bytes.
+
 ## v0.6.2 — 2026-09-15
 
 Adds the draft Content Rating Extension, spec text merged in
