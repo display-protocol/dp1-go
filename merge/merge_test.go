@@ -184,6 +184,131 @@ func TestDisplayForItem_refThenOverrideThenItem(t *testing.T) {
 	}
 }
 
+// TestDisplayForItem_imageRenderingPrecedence walks imageRendering through the same
+// resolution order every other DisplayPrefs field is tested against, because
+// DisplayForItem — not JSON decode, not schema validation — is what a player actually
+// calls to compute an item's effective prefs. The round-trip tests added for this field
+// elsewhere prove it survives the wire; only this one proves it resolves.
+//
+// The bare "pixelated" case is the one that matters for a pixel-art item: an
+// imageRendering alone must be enough to produce a DisplayPrefs at all, which is
+// isEmptyDisplay's clause for the field.
+func TestDisplayForItem_imageRenderingPrecedence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("item over defaults", func(t *testing.T) {
+		t.Parallel()
+		def := &playlist.Defaults{
+			Display: &playlist.DisplayPrefs{Scaling: "fit", ImageRendering: "auto"},
+		}
+		item := playlist.PlaylistItem{
+			Source:  "https://x",
+			Display: &playlist.DisplayPrefs{ImageRendering: "pixelated"},
+		}
+		out, err := DisplayForItem(def, nil, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "pixelated" {
+			t.Fatalf("item imageRendering must win: %+v", out)
+		}
+		if out.Scaling != "fit" {
+			t.Fatalf("scaling must still be inherited from defaults: %+v", out)
+		}
+	})
+
+	t.Run("override over defaults, item over override", func(t *testing.T) {
+		t.Parallel()
+		def := &playlist.Defaults{
+			Display: &playlist.DisplayPrefs{ImageRendering: "auto"},
+		}
+		ov, _ := json.Marshal(map[string]any{
+			"display": map[string]any{"imageRendering": "pixelated"},
+		})
+		out, err := DisplayForItem(def, nil, playlist.PlaylistItem{Source: "https://x", Override: ov})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "pixelated" {
+			t.Fatalf("override must beat defaults: %+v", out)
+		}
+		// item-local sits above override, as it does for every other field.
+		out, err = DisplayForItem(def, nil, playlist.PlaylistItem{
+			Source:   "https://x",
+			Override: ov,
+			Display:  &playlist.DisplayPrefs{ImageRendering: "auto"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "auto" {
+			t.Fatalf("item-local must beat override: %+v", out)
+		}
+	})
+
+	t.Run("inherited when the item says nothing", func(t *testing.T) {
+		t.Parallel()
+		def := &playlist.Defaults{
+			Display: &playlist.DisplayPrefs{ImageRendering: "pixelated"},
+		}
+		out, err := DisplayForItem(def, nil, playlist.PlaylistItem{Source: "https://x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "pixelated" {
+			t.Fatalf("imageRendering must be inherited: %+v", out)
+		}
+	})
+
+	t.Run("alone is not an empty display", func(t *testing.T) {
+		t.Parallel()
+		item := playlist.PlaylistItem{
+			Source:  "https://x",
+			Display: &playlist.DisplayPrefs{ImageRendering: "pixelated"},
+		}
+		out, err := DisplayForItem(nil, nil, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil {
+			t.Fatal("imageRendering alone must still produce a display")
+		}
+		if out.ImageRendering != "pixelated" {
+			t.Fatalf("got %+v", out)
+		}
+	})
+}
+
+// A ref manifest cannot carry imageRendering — the ref-manifest schema's DisplayControls
+// has no such property — so overlaying one must leave an item's own value alone rather
+// than clear it. This is the assertion applyDisplayJSON's "deliberately no case here"
+// comment is making; without it, adding a case there would look harmless.
+func TestDisplayForItem_refManifestDoesNotClearImageRendering(t *testing.T) {
+	t.Parallel()
+	ref := &refmanifest.Manifest{
+		RefVersion: "0.1.0",
+		ID:         "r",
+		Created:    "2025-01-01T00:00:00Z",
+		Locale:     "en",
+		Controls: &refmanifest.Controls{
+			Display: &refmanifest.DisplayControls{Scaling: "fit"},
+		},
+	}
+	def := &playlist.Defaults{
+		Display: &playlist.DisplayPrefs{ImageRendering: "pixelated"},
+	}
+	out, err := DisplayForItem(def, ref, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.ImageRendering != "pixelated" {
+		t.Fatalf("ref manifest must not clear imageRendering: %+v", out)
+	}
+	if out.Scaling != "fit" {
+		t.Fatalf("ref manifest scaling must still apply: %+v", out)
+	}
+}
+
 // --- full stack + applyDisplayJSON edge ---
 
 func TestDisplayForItem_fullOverlay(t *testing.T) {

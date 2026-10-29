@@ -131,6 +131,9 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 		v := *src.Loop
 		dst.Loop = &v
 	}
+	if src.ImageRendering != "" {
+		dst.ImageRendering = src.ImageRendering
+	}
 	if src.Interaction != nil {
 		if dst.Interaction == nil {
 			dst.Interaction = &playlist.InteractionPrefs{}
@@ -168,6 +171,11 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 	}
 }
 
+// applyDisplayJSON overlays a ref manifest's display controls. It deliberately has no
+// ImageRendering case: the ref-manifest schema's DisplayControls $def carries no
+// imageRendering property (only the core playlist and its extension bundle do), so a
+// manifest has no way to express one. Do not add a case here without adding the property
+// to the ref-manifest schema in the same change.
 func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayControls) {
 	if src.Scaling != "" {
 		dst.Scaling = src.Scaling
@@ -204,5 +212,6 @@ func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayContro
 
 func isEmptyDisplay(d playlist.DisplayPrefs) bool {
 	return d.Scaling == "" && len(d.Margin) == 0 && d.Background == "" &&
-		d.Autoplay == nil && d.Loop == nil && d.Interaction == nil && len(d.UserOverrides) == 0
+		d.Autoplay == nil && d.Loop == nil && d.ImageRendering == "" &&
+		d.Interaction == nil && len(d.UserOverrides) == 0
 }
