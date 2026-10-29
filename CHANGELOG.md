@@ -3,7 +3,21 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased — v0.7.0
+## Unreleased — v0.7.1
+
+### Fixed
+
+- `playlist.SeriesID` no longer lets a negative exponent reach `big.Rat` unbounded. The digit
+  bound clamped a negative exponent to zero on the reasoning that it "only shrinks the value" —
+  true of the value, false of the work: `big.Rat` holds `m e -k` as a fraction over `10^k`, so
+  `SetString` materialized a k-digit denominator before `IsInt` could reject the literal as
+  fractional. `{"seriesId": 1e-1000000}` is ten bytes on the wire and allocated roughly 3 MB,
+  the same amplification the positive branch already refused, reached through the denominator
+  instead of the numerator. The bound now reads the exponent's magnitude and ignores its sign.
+  A negative exponent the mantissa genuinely absorbs (`1500e-2` is `15`) is small and still
+  decodes. Reported against a feed built on v0.7.0.
+
+## v0.7.0 — 2026-10-29
 
 Catches the SDK up with the DP-1 spec's Entity consolidation and
 [display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55), found by publishing a

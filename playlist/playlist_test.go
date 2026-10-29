@@ -3,6 +3,7 @@ package playlist
 import (
 	"bytes"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -160,6 +161,71 @@ func TestSeriesID_RejectsExponentBlowup(t *testing.T) {
 			var got SeriesID
 			if err := json.Unmarshal([]byte(in), &got); err == nil {
 				t.Fatalf("decoded a %d-byte literal as %d digits, want an error", len(in), len(got))
+			}
+		})
+	}
+}
+
+// TestSeriesID_RejectsNegativeExponentBlowup is the other half of the test above, for the
+// amplification that reaches big.Rat through the denominator instead of the numerator.
+//
+// Why this one cannot assert only an error, as the positive case does: `1e-1000000` is a
+// fraction, so IsInt refuses it whether or not the bound ran — a returned error proves
+// nothing about which of the two refused it, and the guard could regress to `exponent = 0`
+// with every error assertion still green. What the finding is about is the COST of the
+// refusal, so the cost is what is asserted. big.Rat.SetString materializes a 10^k
+// denominator before IsInt is ever consulted: ~2.9 MB for the first literal below, from
+// ten bytes on the wire.
+//
+// TotalAlloc is cumulative and monotonic, so an intervening GC cannot perturb the delta,
+// and the 64 KiB ceiling sits ~45x under the unguarded cost and ~30x over the guarded one
+// — wide enough that allocator noise cannot reach it from either side.
+func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
+	t.Parallel()
+	const maxAlloc = 64 << 10
+	cases := []string{
+		`1e-1000000`,
+		`1e-100000`,
+		`1E-5000`,
+		`1.5e-900000`,
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			if seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound admitted %q (%d bytes); big.Rat would build a denominator of 10^|exponent| for it", in, len(in))
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			var got SeriesID
+			err := json.Unmarshal([]byte(in), &got)
+			runtime.ReadMemStats(&after)
+			if err == nil {
+				t.Fatalf("decoded %q as %q, want an error", in, got)
+			}
+			if used := after.TotalAlloc - before.TotalAlloc; used > maxAlloc {
+				t.Fatalf("rejecting %q (%d bytes) allocated %d bytes, want under %d: the bound let it reach big.Rat",
+					in, len(in), used, maxAlloc)
+			}
+		})
+	}
+}
+
+// A negative exponent the mantissa really does absorb is an ordinary integer and must
+// keep decoding: bounding on the exponent's magnitude must not turn 1500e-2 into an
+// error just because the sign is now counted.
+func TestSeriesID_AcceptsAbsorbedNegativeExponent(t *testing.T) {
+	t.Parallel()
+	cases := map[string]SeriesID{`1500e-2`: "15", `100e-2`: "1", `1E-0`: "1"}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err != nil {
+				t.Fatalf("%s must still decode: %v", in, err)
+			}
+			if got != want {
+				t.Fatalf("%s decoded to %q, want %q", in, got, want)
 			}
 		})
 	}

@@ -413,7 +413,9 @@ const maxSeriesIDDigits = 1024
 // full took the digits fast path above and is never bounded, because it costs only as
 // much work as it costs bytes and because refusing it would make this decoder reject a
 // document the schema accepts (neither branch of the schema's oneOf carries a maxLength).
-// The bound is on amplification, not on magnitude.
+// The bound is on amplification, not on magnitude — which is why it reads the exponent's
+// magnitude and not its sign: a negative exponent amplifies big.Rat's denominator exactly
+// as a positive one amplifies its numerator.
 func seriesIDWithinDigitBound(lit string) bool {
 	mantissa, exponent := lit, 0
 	if i := strings.IndexAny(lit, "eE"); i >= 0 {
@@ -427,9 +429,15 @@ func seriesIDWithinDigitBound(lit string) bool {
 		exponent = n
 	}
 	if exponent < 0 {
-		// A negative exponent only shrinks the value; big.Rat will reject it as
-		// fractional unless the mantissa absorbs it.
-		exponent = 0
+		// A negative exponent shrinks the VALUE but not the work: big.Rat holds
+		// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
+		// denominator before IsInt can call the value fractional and reject it.
+		// 1e-1000000 is ten bytes and roughly 3 MB of allocation — the same
+		// amplification the positive branch exists to refuse, reached through the
+		// denominator instead of the numerator. Bound on the magnitude either way;
+		// a negative exponent the mantissa really does absorb (1500e-2 is 15) is
+		// small, so it still passes.
+		exponent = -exponent
 	}
 	return len(mantissa)+exponent <= maxSeriesIDDigits
 }
