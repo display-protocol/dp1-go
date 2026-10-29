@@ -400,20 +400,24 @@ const maxSeriesIDDigits = 1024
 // digits, roughly 100000x amplification, and a document of a few tens of KB can hold
 // hundreds of them (the playlist schema puts no maxItems on items).
 //
-// No path inside this module reaches the bound: everything that decodes a Playlist or a
-// PlaylistItem from untrusted bytes validates first — the ParseAndValidate* entrypoints,
-// and resolveDynamicQuery, which schema-checks each item before unmarshaling it — and
-// internal/validate decodes to `any`, where float64 rejects such a literal outright. The
-// bound exists for the one path that has no validator in front of it: Playlist and
-// PlaylistItem are ordinary exported structs and README documents decoding them with a
-// bare json.Unmarshal as supported, so a consumer taking that route would otherwise wear
-// the cost. Do not delete this on the grounds that nothing in the repo calls it.
+// The validated entrypoints do not make this bound redundant, and the comment that once
+// said they did was wrong in the direction that matters. internal/validate decodes to
+// `any` without UseNumber, and encoding/json is asymmetric there: an OVERFLOWING literal
+// (1e400) errors out, but an UNDERFLOWING one (1e-1000000) becomes float64 0 with no
+// error at all. Schema validation therefore passes it, and ParseAndValidate* then
+// unmarshals the original bytes into the Go types — so this bound is reached on the
+// primary documented path, not only on the bare-json.Unmarshal path that Playlist and
+// PlaylistItem also support as exported structs. Do not delete this on the grounds that
+// a validator runs first.
 //
 // Only exponent-form and decimal-point spellings arrive here — a literal written out in
 // full took the digits fast path above and is never bounded, because it costs only as
 // much work as it costs bytes and because refusing it would make this decoder reject a
 // document the schema accepts (neither branch of the schema's oneOf carries a maxLength).
-// The bound is on amplification, not on magnitude.
+// The bound is on amplification, not on magnitude — which is why it reads the exponent's
+// magnitude and not its sign: a negative exponent amplifies big.Rat's denominator exactly
+// as a positive one amplifies its numerator. The two signs are bounded separately rather
+// than summed, because the mantissa means something different to each; see below.
 func seriesIDWithinDigitBound(lit string) bool {
 	mantissa, exponent := lit, 0
 	if i := strings.IndexAny(lit, "eE"); i >= 0 {
@@ -426,12 +430,81 @@ func seriesIDWithinDigitBound(lit string) bool {
 		}
 		exponent = n
 	}
+	// A mantissa with no non-zero digit is the integer 0 whatever its exponent says, and
+	// it is the one shape that absorbs an exponent of ANY size — so it is answered before
+	// either magnitude test, and for both signs. Accepting it is safe only because
+	// big.Rat declines to do the work: SetString returns at its own zero check before any
+	// exponent is applied, on either sign, so `0e-1000000` and `0e9223372036854775807`
+	// each cost about 50-100 bytes, as does a mantissa of a million zeros. There is no
+	// expansion to bound, and these are integers the schema's integer branch accepts —
+	// `0e-5000` and `0e9223372036854775807` both decoded to "0" on v0.7.0, the latter
+	// only because the overflowing sum below happened to wrap into range.
+	// TestSeriesID_ZeroMantissaCostsNothing locks the short-circuit this relies on; if a
+	// future math/big built the 10^k denominator before looking at the mantissa, this
+	// would become the very amplification vector the rest of the function refuses.
+	//
+	// It is deliberately not gated on len(mantissa): a zero mantissa costs what its bytes
+	// cost however long it is, and gating it would re-refuse literals the base branch
+	// accepted in the overflow band (1025 zeros times 10^math.MaxInt decoded to "0").
+	if seriesIDMantissaIsZero(mantissa) {
+		return true
+	}
+	// Every comparison below runs BEFORE any arithmetic on the exponent, because signed
+	// overflow in Go wraps rather than traps and the exponent came off the wire: a
+	// literal may name math.MaxInt or math.MinInt (`1e9223372036854775807` and
+	// `1e-9223372036854775808` are ~23 bytes each). math.MaxInt + len(mantissa) wraps
+	// negative and would satisfy `<= maxSeriesIDDigits`, admitting the literal; negating
+	// math.MinInt yields math.MinInt again and used to do the same. Testing the exponent
+	// first, and never negating it, is what makes the guard total.
+	if exponent > maxSeriesIDDigits {
+		return false
+	}
 	if exponent < 0 {
-		// A negative exponent only shrinks the value; big.Rat will reject it as
-		// fractional unless the mantissa absorbs it.
-		exponent = 0
+		// A negative exponent shrinks the VALUE but not the work: big.Rat holds
+		// `m e -k` as a fraction over 10^k, so SetString materializes a k-digit
+		// denominator in full — before norm() can cancel it against the mantissa, and
+		// before IsInt can call the value fractional. 1e-1000000 is ten bytes and
+		// roughly 3 MB of allocation, the same amplification the positive branch exists
+		// to refuse, reached through the denominator instead of the numerator.
+		//
+		// The mantissa is deliberately NOT charged against that denominator budget, and
+		// that is the one asymmetry between the signs. For a positive exponent the
+		// expanded numerator is len(mantissa)+exponent digits, so summing them measures
+		// the work. For a negative one the mantissa's digits are not amplification at
+		// all — they are already on the wire, byte for byte — and the quotient is never
+		// longer than the mantissa, so summing them measures nothing and refuses
+		// ordinary integers: "1" followed by 512 zeros, times 10^-512, is the integer 1
+		// and 518 bytes on the wire, and the sum called it 1025 digits and rejected it.
+		// The two are therefore bounded independently, which also means this branch
+		// refuses nothing the bound accepted before the sign was counted at all.
+		if len(mantissa) > maxSeriesIDDigits {
+			return false
+		}
+		// What is left is a non-zero mantissa (the zero case returned above) under an
+		// exponent past the budget, and every such literal is fractional: the mantissa's
+		// value is under 10^len(mantissa) <= 10^maxSeriesIDDigits < 10^|exponent|, so
+		// 10^|exponent| cannot divide it and IsInt would refuse it anyway. Refusing here
+		// only changes which error comes back — never whether one does — and saves the
+		// expansion that producing the other error would cost.
+		return exponent >= -maxSeriesIDDigits
 	}
 	return len(mantissa)+exponent <= maxSeriesIDDigits
+}
+
+// seriesIDMantissaIsZero reports whether a JSON number's mantissa carries no non-zero
+// digit — "0", "000", "0.0" and "-0" all qualify. Such a literal is the integer 0 for any
+// exponent of either sign, so no expansion can follow it; see the head of
+// seriesIDWithinDigitBound for why that is the one shape exempt from the magnitude bound.
+//
+// It scans for a digit rather than comparing against "0" because the wire spelling is the
+// producer's: json.Number hands over whatever was written, sign, point and all.
+func seriesIDMantissaIsZero(mantissa string) bool {
+	for i := 0; i < len(mantissa); i++ {
+		if mantissa[i] >= '1' && mantissa[i] <= '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s SeriesID) MarshalJSON() ([]byte, error) {

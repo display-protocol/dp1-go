@@ -3,6 +3,7 @@ package playlist
 import (
 	"bytes"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -160,6 +161,200 @@ func TestSeriesID_RejectsExponentBlowup(t *testing.T) {
 			var got SeriesID
 			if err := json.Unmarshal([]byte(in), &got); err == nil {
 				t.Fatalf("decoded a %d-byte literal as %d digits, want an error", len(in), len(got))
+			}
+		})
+	}
+}
+
+// TestSeriesID_RejectsNegativeExponentBlowup is the other half of the test above, for the
+// amplification that reaches big.Rat through the denominator instead of the numerator.
+//
+// Why this one cannot assert only an error, as the positive case does: `1e-1000000` is a
+// fraction, so IsInt refuses it whether or not the bound ran — a returned error proves
+// nothing about which of the two refused it, and the guard could regress to `exponent = 0`
+// with every error assertion still green. What the finding is about is the COST of the
+// refusal, so the cost is what is asserted. big.Rat.SetString materializes a 10^k
+// denominator before IsInt is ever consulted: ~2.9 MB for the first literal below, from
+// ten bytes on the wire.
+//
+// TotalAlloc is cumulative and monotonic, so an intervening GC cannot perturb the delta,
+// and the 64 KiB ceiling sits ~45x under the unguarded cost and ~30x over the guarded one
+// — wide enough that allocator noise cannot reach it from either side.
+//
+// It is also PROCESS-WIDE, which is why neither this test nor its subtests may call
+// t.Parallel(): any other test allocating between the two ReadMemStats calls lands in the
+// delta and is charged to this literal. Under `go test ./playlist -race -count=10` that
+// read up to ~390 KB against a 64 KiB ceiling and failed on correct code, reporting a
+// big.Rat regression that had not happened. Go releases parked parallel tests only after
+// the sequential pass finishes, so a test that never parks is the isolation — no
+// -parallel=1 at the call site required. Keep the measurement sequential if cases are
+// added; the same applies to the sibling measurement in parse_test.go.
+func TestSeriesID_RejectsNegativeExponentBlowup(t *testing.T) {
+	const maxAlloc = 64 << 10
+	cases := []string{
+		`1e-1000000`,
+		`1e-100000`,
+		`1E-5000`,
+		`1.5e-900000`,
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			if seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound admitted %q (%d bytes); big.Rat would build a denominator of 10^|exponent| for it", in, len(in))
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			var got SeriesID
+			err := json.Unmarshal([]byte(in), &got)
+			runtime.ReadMemStats(&after)
+			if err == nil {
+				t.Fatalf("decoded %q as %q, want an error", in, got)
+			}
+			if used := after.TotalAlloc - before.TotalAlloc; used > maxAlloc {
+				t.Fatalf("rejecting %q (%d bytes) allocated %d bytes, want under %d: the bound let it reach big.Rat",
+					in, len(in), used, maxAlloc)
+			}
+		})
+	}
+}
+
+// The negative branch bounds the mantissa's own length as well as the exponent's
+// magnitude, and that half of it is what keeps the branch from accepting more than the
+// base branch did. A mantissa over the budget is refused whatever its exponent absorbs:
+// "1" followed by 1024 zeros times 10^-512 is an ordinary 513-digit integer, and it was
+// refused on v0.7.0 too (the mantissa alone was already over 1024), so it stays refused.
+//
+// The accepted case sits one character under the limit, so the two together pin the
+// boundary rather than just one side of it. Without this test the length check is the one
+// line of the guard no case reaches, and a fix that dropped it would look green.
+func TestSeriesID_BoundsMantissaLengthUnderNegativeExponent(t *testing.T) {
+	t.Parallel()
+	atLimit := "1" + strings.Repeat("0", 1023) + "e-512"   // 1024 mantissa characters
+	overLimit := "1" + strings.Repeat("0", 1024) + "e-512" // 1025 — one too many
+
+	if !seriesIDWithinDigitBound(atLimit) {
+		t.Fatalf("bound refused a %d-character mantissa; the limit is %d", len(atLimit)-5, maxSeriesIDDigits)
+	}
+	var got SeriesID
+	if err := json.Unmarshal([]byte(atLimit), &got); err != nil {
+		t.Fatalf("a 1024-character mantissa under 10^-512 is an integer and must decode: %v", err)
+	}
+	if want := "1" + strings.Repeat("0", 511); string(got) != want {
+		t.Fatalf("decoded to %d digits, want %d", len(got), len(want))
+	}
+
+	if seriesIDWithinDigitBound(overLimit) {
+		t.Fatalf("bound admitted a %d-character mantissa; the limit is %d", len(overLimit)-5, maxSeriesIDDigits)
+	}
+	if err := json.Unmarshal([]byte(overLimit), &got); err == nil {
+		t.Fatalf("decoded a %d-character mantissa, want an error", len(overLimit)-5)
+	}
+}
+
+// A zero mantissa is the integer 0 however large its exponent, on either sign, and the
+// bound accepts it without consulting the magnitude at all. That is safe only because
+// big.Rat declines to do the work: SetString returns at its own zero check before any
+// exponent is applied, so `0e-1000000` costs ~48 bytes, the same as `0e-5`. This test
+// locks that short-circuit rather than the bound's return value, because the bound is
+// deliberately permissive here and the short-circuit is the whole reason it may be — if a
+// future math/big built the 10^k denominator before looking at the mantissa, a zero
+// mantissa would become the same amplification vector this guard exists to refuse, and
+// nothing else in the suite would notice.
+//
+// Both signs are covered because the two reached this state differently, and the positive
+// side is the one that regressed. `0e-5000` plainly decoded to "0" on v0.7.0. So did
+// `0e9223372036854775807` — but only because len(mantissa)+exponent overflowed int and
+// wrapped into range, the very hole the range check closed. Closing it without exempting
+// the zero mantissa turned a literal that decoded into a hard refusal, which is why the
+// exemption is not gated on the exponent's magnitude or the mantissa's length.
+//
+// Sequential for the same reason as the measurement above: TotalAlloc is process-wide.
+func TestSeriesID_ZeroMantissaCostsNothing(t *testing.T) {
+	const maxAlloc = 64 << 10
+	for _, in := range []string{
+		`0e-5000`, `0e-1000000`, `-0e-5000`, `0.0e-1000000`, `0E-2000`,
+		`0e5000`, `0E+2000`, `0.0e1000000`,
+		// The overflow band: on v0.7.0 these passed the bound only because the sum
+		// wrapped negative, and big.Rat read them as 0 regardless. An exponent one past
+		// math.MaxInt (`0e9223372036854775808`) is NOT here: strconv.Atoi refuses it
+		// before any of this, exactly as it does on the base branch, so nothing regressed
+		// there and the zero mantissa never gets a say.
+		`0e9223372036854775807`, `-0e9223372036854775807`, `0e-9223372036854775808`,
+	} {
+		t.Run(in, func(t *testing.T) {
+			if !seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound refused %q; it is the integer 0 and big.Rat applies no exponent to it", in)
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			var got SeriesID
+			err := json.Unmarshal([]byte(in), &got)
+			runtime.ReadMemStats(&after)
+			if err != nil {
+				t.Fatalf("%s is the integer 0 and decoded on v0.7.0; it must still decode: %v", in, err)
+			}
+			if got != "0" {
+				t.Fatalf("%s decoded to %q, want \"0\"", in, got)
+			}
+			if used := after.TotalAlloc - before.TotalAlloc; used > maxAlloc {
+				t.Fatalf("decoding %q allocated %d bytes, want under %d: big.Rat applied the exponent to a zero mantissa",
+					in, used, maxAlloc)
+			}
+		})
+	}
+}
+
+// An exponent at either end of int must be refused by the bound itself, not by whatever
+// runs after it. Go's signed overflow wraps rather than traps, so arithmetic on the
+// parsed exponent before it is range-checked silently admits the literal:
+// -math.MinInt64 is math.MinInt64 again, and math.MaxInt64 + len(mantissa) wraps
+// negative — both then satisfy `<= maxSeriesIDDigits`.
+//
+// This asserts the bound's own return value and deliberately not an allocation, because
+// there is no allocation to measure: big.Rat.SetString refuses an exponent this large on
+// its own, for about 1.5 KB, so a bypass here costs nothing today. That is exactly why it
+// needs a test of its own — the guard is currently correct only by accident of big.Rat's
+// internal limit, and nothing would notice if that limit moved. Severity is low on its
+// own; the test is cheap and the guard should be total.
+func TestSeriesID_BoundRefusesExponentsAtIntLimits(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{`1e9223372036854775807`, `1e-9223372036854775808`} {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			if seriesIDWithinDigitBound(in) {
+				t.Fatalf("bound admitted %q (%d bytes); the exponent overflowed int before the comparison", in, len(in))
+			}
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err == nil {
+				t.Fatalf("decoded %q as %q, want an error", in, got)
+			}
+		})
+	}
+}
+
+// A negative exponent the mantissa really does absorb is an ordinary integer and must
+// keep decoding: bounding on the exponent's magnitude must not turn 1500e-2 into an
+// error just because the sign is now counted.
+//
+// The long case is the one that matters, and the one the first cut of this fix got wrong:
+// the short literals pass under any formulation, because 4 + 2 is inside the bound
+// whether the exponent is summed with the mantissa or not. "1" followed by 512 zeros,
+// times 10^-512, is the integer 1 — 513 mantissa characters against a 512 exponent, which
+// summed is 1025 and over the 1024 budget. It decoded on v0.7.0 and must keep decoding;
+// a formulation that sums the two refuses it and only the long case notices.
+func TestSeriesID_AcceptsAbsorbedNegativeExponent(t *testing.T) {
+	t.Parallel()
+	cases := map[string]SeriesID{`1500e-2`: "15", `100e-2`: "1", `1E-0`: "1"}
+	cases["1"+strings.Repeat("0", 512)+"e-512"] = "1"
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			var got SeriesID
+			if err := json.Unmarshal([]byte(in), &got); err != nil {
+				t.Fatalf("%s must still decode: %v", in, err)
+			}
+			if got != want {
+				t.Fatalf("%s decoded to %q, want %q", in, got, want)
 			}
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -204,6 +205,73 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_openAtAndFullEntity(t *t
 	}
 }
 
+// TestParseAndValidatePlaylist_seriesIDUnderflowDoesNotExpand drives the amplification
+// through the primary documented entrypoint, because schema validation does NOT stop it.
+//
+// encoding/json is asymmetric on out-of-range numbers when decoding into `any`, which is
+// what internal/validate does: an overflowing literal (1e400) errors, but an underflowing
+// one (1e-1000000) becomes float64 0 with no error at all. The schema therefore sees a
+// well-formed integer seriesId of 0 and passes the document, and ParseAndValidatePlaylist
+// then unmarshals the ORIGINAL bytes into the Go types — where the raw literal reaches
+// SeriesID's guard. Only that guard stands between a ten-byte exponent and big.Rat
+// building a million-digit denominator.
+//
+// The measurement is a DIFFERENCE against a control document, not an absolute ceiling:
+// parsing and schema-validating a playlist at all costs about 1.4 MB here, which would
+// swamp any fixed threshold and make the test pass whether or not the guard ran. The
+// control is the same document with an ordinary seriesId, so what is left is the cost the
+// literal itself adds — roughly 2.9 MB unguarded, nothing guarded.
+//
+// An error is not asserted as the proof for the same reason as the unit tests in
+// playlist/: the literal is fractional, so IsInt would refuse it either way.
+//
+// No t.Parallel() here, deliberately: TotalAlloc is a process-wide counter, so a test
+// allocating concurrently with either measurement below lands in the control or the attack
+// delta and is charged to the literal. Go releases parked parallel tests only after the
+// sequential pass finishes, so staying sequential is what isolates the measurement — the
+// same reason TestSeriesID_RejectsNegativeExponentBlowup in playlist/ is sequential.
+func TestParseAndValidatePlaylist_seriesIDUnderflowDoesNotExpand(t *testing.T) {
+	// Comfortably under the ~2.9 MB the unguarded expansion costs, comfortably over the
+	// handful of KB that parsing one extra literal costs.
+	const maxExtraAlloc = 256 << 10
+	doc := func(seriesID string) []byte {
+		return []byte(fmt.Sprintf(`{
+			"dpVersion": "1.1.0",
+			"title": "Underflow",
+			"items": [{
+				"source": "https://a",
+				"provenance": {"type": "onChain", "contract": {"chain": "evm", "seriesId": %s}}
+			}],
+			"signatures": [%s]
+		}`, seriesID, dummySignatureJSON))
+	}
+	cost := func(d []byte) (uint64, error) {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err := dp1.ParseAndValidatePlaylist(d)
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc, err
+	}
+
+	// Warm every lazily-built schema before measuring, so the control is not charged for
+	// one-time setup the attack document would then appear to avoid.
+	if _, err := cost(doc(`512`)); err != nil {
+		t.Fatalf("control document must validate: %v", err)
+	}
+	control, err := cost(doc(`512`))
+	if err != nil {
+		t.Fatalf("control document must validate: %v", err)
+	}
+	attack, err := cost(doc(`1e-1000000`))
+	if err == nil {
+		t.Fatal("ParseAndValidatePlaylist accepted an underflowing seriesId, want an error")
+	}
+	if attack > control+maxExtraAlloc {
+		t.Fatalf("the underflowing literal added %d bytes over the control (%d vs %d), want under %d: big.Rat expanded it",
+			attack-control, attack, control, maxExtraAlloc)
+	}
+}
+
 // TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema drives the two
 // dp1#55 core-schema fields through the real embedded schema rather than through Go
 // types alone, in both of seriesId's wire forms.
@@ -226,6 +294,12 @@ func TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema(t *test
 	}{
 		{"integer wire form", `512`, "512"},
 		{"decimal string wire form", `"` + bigSeries + `"`, playlist.SeriesID(bigSeries)},
+		// An absorbed negative exponent, through the schema and the decoder both: the
+		// schema's integer branch accepts it (encoding/json reads it as float64 1), and
+		// SeriesID's digit bound must not refuse it for the 513 mantissa characters it
+		// spends to say 1. This is the literal the first cut of the negative-exponent
+		// bound rejected.
+		{"absorbed negative exponent", "1" + strings.Repeat("0", 512) + "e-512", "1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
