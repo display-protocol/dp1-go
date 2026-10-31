@@ -7,6 +7,10 @@ import "github.com/display-protocol/dp1-go/extension/identity"
 type Note struct {
 	Text     string   `json:"text"`
 	Duration *float64 `json:"duration,omitempty"` // display seconds when present; schema default 20 when omitted
+	// Title is a heading shown above Text (1–200 characters).
+	Title string `json:"title,omitempty"`
+	// Author is who wrote Text. Nil means the note is the curators' own.
+	Author *identity.Entity `json:"author,omitempty"`
 }
 
 // DynamicQuery configures dynamic item fetching from an indexer.
@@ -37,4 +41,6 @@ type Overlay struct {
 	Links        []identity.Link `json:"links,omitempty"`
 	CoverImage   string          `json:"coverImage,omitempty"`
 	DynamicQuery *DynamicQuery   `json:"dynamicQuery,omitempty"`
+	// Visibility is the listing request; nil is absent (public). See playlist.Playlist.Visibility (§3.7).
+	Visibility *string `json:"visibility,omitempty"`
 }

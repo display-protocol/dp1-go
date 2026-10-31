@@ -46,6 +46,19 @@ type Playlist struct {
 	// Links is editorial content about the playlist (articles, events, news), in the
 	// order to show them — references only, the content itself stays at the URL (dp1#55).
 	Links []identity.Link `json:"links,omitempty"`
+	// Visibility asks directories to leave the playlist out of their listings (playlists
+	// extension §3.7): "public" or "unlisted". A listing request, not access control; it has no
+	// effect on playback. Nil means the member is absent, which is public. A pointer because the
+	// vocabulary is open and every present value other than exactly "public" — including "" —
+	// means unlisted: a plain string would read "" as absent and drop it on re-encode.
+	//
+	// A directory deciding what to list should read the member by exact key from the signed
+	// bytes, as dp1-feed-v2 does. encoding/json matches keys case-insensitively, so a document
+	// carrying both "visibility" and an unknown "Visibility" member can decode to the second.
+	// PlaylistItem takes its content-rating members by exact key for this reason; Playlist does
+	// not, because a Playlist.UnmarshalJSON would be promoted into structs that embed Playlist
+	// (ffos-user's dp1.Playlist does) and take over their decoding, dropping their own fields.
+	Visibility *string `json:"visibility,omitempty"`
 }
 
 // Defaults holds playlist-level defaults inherited by items.

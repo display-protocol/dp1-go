@@ -10,7 +10,7 @@
       "type": "string",
       "description": "Semantic version of the manifest schema",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.1.0", "1.0.0"]
+      "examples": ["0.1.0", "1.0.0", "1.2.0"]
     },
     "id": {
       "type": "string",
@@ -66,6 +66,38 @@
           "type": "string",
           "description": "Detailed description of the work (one or two paragraphs)"
         },
+        "medium": {
+          "type": "object",
+          "description": "What the work is made of: a type a catalog can filter on, and the lines its page shows beneath it.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Machine-readable medium type. Omitted where the producer does not know it.",
+              "enum": [
+                "image",
+                "video",
+                "audio",
+                "software",
+                "3d",
+                "animated-gif",
+                "pdf",
+                "text",
+                "other"
+              ]
+            },
+            "details": {
+              "type": "array",
+              "description": "How the medium reads on the work's page: one short line per fact, in display order — format with colour and sound, dimensions, duration, technique, toolchain.",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "maxItems": 8
+            }
+          },
+          "additionalProperties": false
+        },
         "tags": {
           "type": "array",
           "description": "Categorical tags for the work",
@@ -98,7 +130,7 @@
     },
     "Entity": {
       "type": "object",
-      "description": "A person or organization named by a DP-1 document: an artist credited on a work, a curator or partner of a playlist or channel, a channel publisher, or the author of a note. One model for every place DP-1 names someone (supersedes the deprecated Artist $def below, now a $ref to this one). Beyond name, the fields are a profile snapshot taken when the document was authored; consumers MAY overlay fresher registry data keyed by addresses or key.",
+      "description": "A person or organization named by a DP-1 document: an artist credited on a work, a curator or partner of a playlist or channel, a channel publisher, or the author of a note. One model for every place DP-1 names someone. Beyond name, the fields are a profile snapshot taken when the document was authored; consumers MAY overlay fresher registry data keyed by addresses or key.",
       "required": ["name"],
       "properties": {
         "name": {
@@ -132,7 +164,7 @@
         },
         "addresses": {
           "type": "array",
-          "description": "Raw wallet addresses this producer attributes to the entity (0x... EVM, tz1|tz2|tz3|tz4... Tezos). Contract addresses (Tezos KT1..., EVM collection contracts) name a collection, not a person, and MUST NOT be listed; see provenance.contract. The only field consumers MAY use to correlate an entity across producers. A signed claim of the producer, not a fact: a wallet may be shared, and overlap between two producers' lists does not by itself make one entity.",
+          "description": "Raw wallet addresses this producer attributes to the artist (0x... EVM, tz1|tz2|tz3|tz4... Tezos). Contract addresses (Tezos KT1..., EVM collection contracts) name a collection, not a person, and MUST NOT be listed; see provenance.contract. The only field consumers MAY use to correlate an artist across producers. A signed claim of the producer, not a fact: a wallet may be shared, and overlap between two producers' lists does not by itself make one artist.",
           "items": {
             "type": "string",
             "minLength": 1
@@ -250,13 +282,22 @@
     },
     "Controls": {
       "type": "object",
-      "description": "Display preferences and safety constraints",
+      "description": "Display preferences, safety constraints and device permissions",
       "properties": {
         "display": {
           "$ref": "#/$defs/DisplayControls"
         },
         "safety": {
           "$ref": "#/$defs/SafetyControls"
+        },
+        "permissions": {
+          "type": "array",
+          "description": "Device capabilities the work needs to run as intended. A player that cannot grant one SHOULD NOT start the work silently; it SHOULD show why the work cannot play.",
+          "items": {
+            "type": "string",
+            "enum": ["camera", "microphone"]
+          },
+          "uniqueItems": true
         }
       }
     },
@@ -305,6 +346,11 @@
           "type": "boolean",
           "description": "Repeat automatically",
           "default": false
+        },
+        "imageRendering": {
+          "type": "string",
+          "description": "How raster images are resampled when scaled. \"pixelated\" keeps hard pixel edges (nearest-neighbour), for pixel art and bitmaps; \"auto\" lets the player smooth. Independent of scaling, which decides how the artwork fits",
+          "enum": ["auto", "pixelated"]
         },
         "interaction": {
           "type": "object",

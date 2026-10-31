@@ -171,11 +171,9 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 	}
 }
 
-// applyDisplayJSON overlays a ref manifest's display controls. It deliberately has no
-// ImageRendering case: the ref-manifest schema's DisplayControls $def carries no
-// imageRendering property (only the core playlist and its extension bundle do), so a
-// manifest has no way to express one. Do not add a case here without adding the property
-// to the ref-manifest schema in the same change.
+// applyDisplayJSON overlays a ref manifest's display controls. Every DisplayControls field
+// needs a case here: one without a case decodes and is then ignored, so the manifest's
+// value never reaches the player.
 func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayControls) {
 	if src.Scaling != "" {
 		dst.Scaling = src.Scaling
@@ -193,6 +191,9 @@ func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayContro
 	if src.Loop != nil {
 		v := *src.Loop
 		dst.Loop = &v
+	}
+	if src.ImageRendering != "" {
+		dst.ImageRendering = src.ImageRendering
 	}
 	if len(src.Interaction) > 0 {
 		if dst.Interaction == nil {
