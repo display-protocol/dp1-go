@@ -3,6 +3,59 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased
+
+Catches the embedded schemas up with the rest of
+[display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55) and pins them to a spec
+commit. The schemas already accepted the six members below, but the structs had no fields for
+them: `json.Unmarshal` dropped them, and a strict decoder built on these types (dp1-feed-v2's
+request models) refused the document.
+
+### Added
+
+- `playlist.Playlist.Visibility` and `playlists.Overlay.Visibility` (`*string`) — the playlists
+  extension's listing request (§3.7): `public` or `unlisted`. Nil means absent, which is public. A
+  pointer because the vocabulary is open and every present value other than exactly `public`,
+  including `""`, means unlisted.
+- `playlists.Note.Title` and `playlists.Note.Author` (an `identity.Entity`; nil means the note is
+  the curators' own).
+- `refmanifest.Metadata.Medium` (`Type` from a closed enumeration, `Details` as display lines),
+  `refmanifest.Controls.Permissions` (`camera`, `microphone`) and
+  `refmanifest.DisplayControls.ImageRendering` — refVersion 1.2.0.
+- `scripts/check-schema-sync.sh` and the Schema sync workflow: `internal/schema/` must be byte
+  copies of display-protocol/dp1 at the commit in `internal/schema/dp1-commit.txt`.
+  `playlist-group.json` is the one embedded file the spec no longer has (removed in dp1#41); it
+  stays while dp1-feed-v2, dp1-cli and dp1-validator import `playlistgroup`.
+
+### Changed
+
+- `merge.DisplayForItem` applies a manifest's `imageRendering` at the manifest's place in the
+  resolution order: above defaults and the inline copy, below override and item-local fields.
+- The channels extension schema is registered under its spec `$id`,
+  `extensions/channels/v1.1.0/schema.json`; it was embedded under v1.0.0.
+- Schema descriptions follow the spec text at the pinned commit.
+
+### Compatibility
+
+Documents that validated before still do, unless they use one of the six members with a value the
+new schemas reject — a non-string `visibility`, a note `title` outside 1–200 characters or an
+`author` without `name`, an empty, repeated or unknown `permissions` entry, a `medium` with an
+unknown `type`, an extra member or an empty `details` line, an `imageRendering` other than `auto`
+or `pixelated`. The old schemas did not describe these members, so any value passed.
+
+`Playlist`, `Overlay`, `Note`, `Metadata`, `Controls` and `DisplayControls` gain exported fields,
+so unkeyed composite literals of them stop compiling; keyed literals are unaffected.
+
+### Known limits
+
+- On the core-only path (`ParseAndValidatePlaylist`), a `visibility` or note `title`/`author` of
+  the wrong JSON type fails the decode, as `openAt`, `summary`, `curators` and `note` already do;
+  only `inlineManifest` and the content-rating members are tolerated there.
+- `visibility` matches case-insensitively, like every field except the content-rating members.
+  A directory deciding what to list should read the member by exact key from the signed bytes.
+  An exact-key `Playlist.UnmarshalJSON` is ruled out: it would be promoted into structs that embed
+  `Playlist` (ffos-user does) and take over their decoding.
+
 ## v0.7.1 — 2026-10-29
 
 ### Fixed

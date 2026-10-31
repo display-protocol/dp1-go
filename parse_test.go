@@ -272,6 +272,69 @@ func TestParseAndValidatePlaylist_seriesIDUnderflowDoesNotExpand(t *testing.T) {
 	}
 }
 
+// decodeStrict decodes raw into v and fails on any member v has no field for. The schemas
+// allow these members, so a plain json.Unmarshal drops a missing field silently, while a
+// strict decoder built on these types (dp1-feed-v2's request models) rejects the document.
+func decodeStrict(t *testing.T, raw []byte, v any) {
+	t.Helper()
+	d := json.NewDecoder(strings.NewReader(string(raw)))
+	d.DisallowUnknownFields()
+	if err := d.Decode(v); err != nil {
+		t.Fatalf("strict decode: %v", err)
+	}
+}
+
+// Playlist visibility (§3.7) and the note's title and author arrived with dp1#55 after the
+// v0.7.0 port. The schema accepted them, but the structs had no fields for them, so they were
+// dropped on decode, and a strict decode refused the document.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_visibilityAndNoteAuthor(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{"dpVersion":"1.1.0","id":"385f79b6-a45f-4c1c-8080-e93a192adccc","title":"P",
+		"created":"2026-10-30T00:00:00Z","visibility":"unlisted",
+		"note":{"text":"Why these works","title":"Before you start","author":{"name":"A Curator","role":"curator"}},
+		"items":[{"source":"https://a","note":{"text":"t","author":{"name":"The Artist"}}}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Visibility == nil || *out.Visibility != "unlisted" {
+		t.Fatalf("visibility: got %v", out.Visibility)
+	}
+	if out.Note == nil || out.Note.Title != "Before you start" || out.Note.Author == nil || out.Note.Author.Name != "A Curator" {
+		t.Fatalf("note title/author dropped on decode: %+v", out.Note)
+	}
+	if n := out.Items[0].Note; n == nil || n.Author == nil || n.Author.Name != "The Artist" {
+		t.Fatalf("item note author dropped on decode: %+v", n)
+	}
+	decodeStrict(t, doc, &playlist.Playlist{})
+
+	// The extension schema types visibility as a string; the vocabulary is open, the type is not.
+	for name, v := range map[string]string{"null": `null`, "number": `1`, "bool": `false`} {
+		bad := strings.Replace(string(doc), `"visibility":"unlisted"`, `"visibility":`+v, 1)
+		if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(bad)); err == nil {
+			t.Fatalf("visibility %s: expected schema rejection", name)
+		}
+	}
+	// Any present value other than exactly "public" means unlisted, so an unknown string and the
+	// empty string must both survive decode and re-encode as present; only absence is public.
+	for _, v := range []string{"friends-only", ""} {
+		src := strings.Replace(string(doc), `"visibility":"unlisted"`, `"visibility":"`+v+`"`, 1)
+		out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(src))
+		if err != nil || out.Visibility == nil || *out.Visibility != v {
+			t.Fatalf("visibility %q must validate and decode as present: %v %+v", v, err, out)
+		}
+		round, _ := json.Marshal(out)
+		if !strings.Contains(string(round), `"visibility":"`+v+`"`) {
+			t.Fatalf("visibility %q lost on re-encode: %s", v, round)
+		}
+	}
+	absent := strings.Replace(string(doc), `"visibility":"unlisted",`, ``, 1)
+	if out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(absent)); err != nil || out.Visibility != nil {
+		t.Fatalf("absent visibility must decode as nil: %v %+v", err, out)
+	}
+}
+
 // TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema drives the two
 // dp1#55 core-schema fields through the real embedded schema rather than through Go
 // types alone, in both of seriesId's wire forms.
@@ -696,6 +759,42 @@ func TestParseAndValidateRefManifest_artistCarriesFullEntity(t *testing.T) {
 	}
 	if back.Metadata.Artists[0].Location != "Lisbon, Portugal" {
 		t.Fatalf("location lost on re-marshal: %+v", back.Metadata.Artists[0])
+	}
+}
+
+// The refVersion 1.2.0 members metadata.medium, controls.permissions and
+// controls.display.imageRendering validated before this port but had no struct fields, so a
+// decode dropped them and a strict decode refused the manifest.
+func TestParseAndValidateRefManifest_refVersion120Members(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{"refVersion":"1.2.0","id":"ref-120","created":"2026-10-30T00:00:00Z","locale":"en",
+		"metadata":{"title":"Work","medium":{"type":"video","details":["Video (color, sound)","1920 x 1080 pixels"]}},
+		"controls":{"display":{"scaling":"fit","imageRendering":"pixelated"},"permissions":["camera","microphone"]}}`)
+	out, err := dp1.ParseAndValidateRefManifest(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := out.Metadata.Medium; m == nil || m.Type != "video" || len(m.Details) != 2 || m.Details[1] != "1920 x 1080 pixels" {
+		t.Fatalf("medium dropped on decode: %+v", m)
+	}
+	if out.Controls.Display.ImageRendering != "pixelated" {
+		t.Fatalf("imageRendering dropped on decode: %+v", out.Controls.Display)
+	}
+	if p := out.Controls.Permissions; len(p) != 2 || p[0] != "camera" || p[1] != "microphone" {
+		t.Fatalf("permissions dropped on decode: %+v", p)
+	}
+	decodeStrict(t, doc, &refmanifest.Manifest{})
+
+	for name, bad := range map[string][2]string{
+		"unknown permission":  {`"permissions":["camera","microphone"]`, `"permissions":["gps"]`},
+		"repeated permission": {`"permissions":["camera","microphone"]`, `"permissions":["camera","camera"]`},
+		"unknown medium type": {`"type":"video"`, `"type":"painting"`},
+		"empty medium detail": {`"1920 x 1080 pixels"`, `""`},
+		"unknown rendering":   {`"imageRendering":"pixelated"`, `"imageRendering":"smooth"`},
+	} {
+		if _, err := dp1.ParseAndValidateRefManifest([]byte(strings.Replace(string(doc), bad[0], bad[1], 1))); err == nil {
+			t.Fatalf("%s: expected schema rejection", name)
+		}
 	}
 }
 

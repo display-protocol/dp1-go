@@ -19,6 +19,7 @@
       "if": {
         "properties": {
           "items": {
+            "type": "array",
             "maxItems": 0
           }
         }
@@ -197,8 +198,11 @@
         },
         "imageRendering": {
           "type": "string",
-          "description": "How raster images are resampled when scaled. \"pixelated\" keeps hard pixel edges (nearest-neighbour), for pixel art and bitmaps; \"auto\" lets the player smooth. Independent of scaling, which decides how the artwork fits",
-          "enum": ["auto", "pixelated"],
+          "description": "How raster images are resampled when scaled. \"pixelated\" keeps hard pixel edges (nearest-neighbor), for pixel art and bitmaps; \"auto\" lets the player smooth. Independent of scaling, which decides how the artwork fits",
+          "enum": [
+            "auto",
+            "pixelated"
+          ],
           "default": "auto"
         },
         "interaction": {
@@ -287,6 +291,7 @@
             },
             "phash": {
               "type": "string",
+              "description": "64-bit DCT perceptual hash of the first frame (§5): 0x and 16 lowercase hex digits, compared by Hamming distance",
               "pattern": "^0x[a-f0-9]+$"
             }
           }
@@ -305,7 +310,7 @@
         },
         "contract": {
           "type": "object",
-          "description": "Smart contract details (required for onChain and seriesRegistry types)",
+          "description": "Where the record lives: contract details for onChain and seriesRegistry (required for those types). For offChainURI, carries the canonical link in uri.",
           "properties": {
             "chain": {
               "type": "string",
@@ -324,8 +329,15 @@
             "seriesId": {
               "description": "Series identifier within the contract. An integer when the contract numbers its series with small values; a decimal string when the identifier is too large for a JSON number to hold exactly (for example a 256-bit id), the same reason tokenId is a string",
               "oneOf": [
-                {"type": "integer", "minimum": 0},
-                {"type": "string", "pattern": "^[0-9]+$"}
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "string",
+                  "description": "Decimal digits, as the integer would be written",
+                  "pattern": "^[0-9]+$"
+                }
               ]
             },
             "tokenId": {
@@ -334,7 +346,7 @@
             },
             "uri": {
               "type": "string",
-              "description": "URI to token metadata (ipfs://, eth://, https://)",
+              "description": "URI to the record (ipfs://, eth://, https://): token metadata on chain, or the canonical off-chain record for offChainURI. The block's only link to its record.",
               "format": "uri"
             },
             "metaHash": {

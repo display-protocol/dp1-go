@@ -20,8 +20,21 @@ type Metadata struct {
 	Artists     []Artist             `json:"artists,omitempty"`
 	CreditLine  string               `json:"creditLine,omitempty"`
 	Description string               `json:"description,omitempty"`
+	Medium      *Medium              `json:"medium,omitempty"`
 	Tags        []string             `json:"tags,omitempty"`
 	Thumbnails  map[string]Thumbnail `json:"thumbnails,omitempty"`
+}
+
+// Medium says what the work is made of, twice over (spec §4.1, refVersion 1.2.0): Type is
+// the filter a catalog groups by, Details the lines a reader sees under the title.
+type Medium struct {
+	// Type is one of image, video, audio, software, 3d, animated-gif, pdf, text, other.
+	// Empty when the producer does not know it.
+	Type string `json:"type,omitempty"`
+	// Details are short labels in display order, one fact each (format with color and
+	// sound, dimensions, duration, technique, toolchain); at most eight, each 1–200
+	// characters. Consumers render them in order and must not reorder or parse them.
+	Details []string `json:"details,omitempty"`
 }
 
 // Artist identifies a creator and, from refVersion 1.1.0, carries a
@@ -150,20 +163,27 @@ type Thumbnail struct {
 	SHA256 string `json:"sha256,omitempty"`
 }
 
-// Controls groups display and safety preferences from the manifest.
+// Controls groups display and safety preferences and device permissions from the manifest.
 type Controls struct {
 	Display *DisplayControls `json:"display,omitempty"`
 	Safety  *SafetyControls  `json:"safety,omitempty"`
+	// Permissions lists the device capabilities the work needs to run as intended: "camera",
+	// "microphone" (refVersion 1.2.0). A player that cannot grant one should not start the
+	// work silently; it should show why the work cannot play.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // DisplayControls mirrors playlist display prefs at manifest level.
 type DisplayControls struct {
-	Scaling     string          `json:"scaling,omitempty"`
-	Margin      json.RawMessage `json:"margin,omitempty"`
-	Background  string          `json:"background,omitempty"`
-	Autoplay    *bool           `json:"autoplay,omitempty"`
-	Loop        *bool           `json:"loop,omitempty"`
-	Interaction json.RawMessage `json:"interaction,omitempty"`
+	Scaling    string          `json:"scaling,omitempty"`
+	Margin     json.RawMessage `json:"margin,omitempty"`
+	Background string          `json:"background,omitempty"`
+	Autoplay   *bool           `json:"autoplay,omitempty"`
+	Loop       *bool           `json:"loop,omitempty"`
+	// ImageRendering is "auto" or "pixelated", as playlist.DisplayPrefs.ImageRendering
+	// (refVersion 1.2.0); merge layers it in the same resolution order as the other fields.
+	ImageRendering string          `json:"imageRendering,omitempty"`
+	Interaction    json.RawMessage `json:"interaction,omitempty"`
 }
 
 // SafetyConstraints limits runtime resources.

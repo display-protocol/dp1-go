@@ -279,10 +279,8 @@ func TestDisplayForItem_imageRenderingPrecedence(t *testing.T) {
 	})
 }
 
-// A ref manifest cannot carry imageRendering — the ref-manifest schema's DisplayControls
-// has no such property — so overlaying one must leave an item's own value alone rather
-// than clear it. This is the assertion applyDisplayJSON's "deliberately no case here"
-// comment is making; without it, adding a case there would look harmless.
+// A ref manifest that says nothing about imageRendering must leave the inherited value alone
+// rather than clear it: the case in applyDisplayJSON applies only a non-empty value.
 func TestDisplayForItem_refManifestDoesNotClearImageRendering(t *testing.T) {
 	t.Parallel()
 	ref := &refmanifest.Manifest{
@@ -307,6 +305,64 @@ func TestDisplayForItem_refManifestDoesNotClearImageRendering(t *testing.T) {
 	if out.Scaling != "fit" {
 		t.Fatalf("ref manifest scaling must still apply: %+v", out)
 	}
+}
+
+// A manifest's imageRendering (refVersion 1.2.0) takes the manifest's place in the resolution
+// order: above defaults and the inline copy, below override and item-local fields.
+func TestDisplayForItem_manifestImageRendering(t *testing.T) {
+	t.Parallel()
+	withRendering := func(id, v string) *refmanifest.Manifest {
+		return &refmanifest.Manifest{
+			RefVersion: "1.2.0", ID: id, Created: "2025-01-01T00:00:00Z", Locale: "en",
+			Controls: &refmanifest.Controls{Display: &refmanifest.DisplayControls{ImageRendering: v}},
+		}
+	}
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{ImageRendering: "auto"}}
+
+	t.Run("ref over defaults and inline", func(t *testing.T) {
+		t.Parallel()
+		item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, withRendering("inline", "auto"))}
+		out, err := DisplayForItem(def, withRendering("remote", "pixelated"), item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "pixelated" {
+			t.Fatalf("ref manifest imageRendering must apply: %+v", out)
+		}
+	})
+
+	t.Run("inline over defaults when no ref", func(t *testing.T) {
+		t.Parallel()
+		item := playlist.PlaylistItem{Source: "https://x", InlineManifest: rawManifest(t, withRendering("inline", "pixelated"))}
+		out, err := DisplayForItem(def, nil, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "pixelated" {
+			t.Fatalf("inline manifest imageRendering must apply: %+v", out)
+		}
+	})
+
+	t.Run("override and item-local over ref", func(t *testing.T) {
+		t.Parallel()
+		ov, _ := json.Marshal(map[string]any{"display": map[string]any{"imageRendering": "auto"}})
+		out, err := DisplayForItem(def, withRendering("remote", "pixelated"), playlist.PlaylistItem{Source: "https://x", Override: ov})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "auto" {
+			t.Fatalf("override must beat ref: %+v", out)
+		}
+		out, err = DisplayForItem(nil, withRendering("remote", "pixelated"), playlist.PlaylistItem{
+			Source: "https://x", Display: &playlist.DisplayPrefs{ImageRendering: "auto"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out == nil || out.ImageRendering != "auto" {
+			t.Fatalf("item-local must beat ref: %+v", out)
+		}
+	})
 }
 
 // --- full stack + applyDisplayJSON edge ---
