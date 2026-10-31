@@ -6,8 +6,8 @@ compatibility; every break is listed here with the migration.
 ## Unreleased
 
 Catches the embedded schemas up with the rest of
-[display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55).
-The schemas already accepted the six members below, but the structs had no fields for
+[display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55) and pins them to a spec
+commit. The schemas already accepted the six members below, but the structs had no fields for
 them: `json.Unmarshal` dropped them, and a strict decoder built on these types (dp1-feed-v2's
 request models) refused the document.
 
@@ -22,6 +22,10 @@ request models) refused the document.
 - `refmanifest.Metadata.Medium` (`Type` from a closed enumeration, `Details` as display lines),
   `refmanifest.Controls.Permissions` (`camera`, `microphone`) and
   `refmanifest.DisplayControls.ImageRendering` — refVersion 1.2.0.
+- `scripts/check-schema-sync.sh` and the Schema sync workflow: `internal/schema/` must be byte
+  copies of display-protocol/dp1 at the commit in `internal/schema/dp1-commit.txt`.
+  `playlist-group.json` is the one embedded file the spec no longer has (removed in dp1#41); it
+  stays while dp1-feed-v2, dp1-cli and dp1-validator import `playlistgroup`.
 
 ### Changed
 
