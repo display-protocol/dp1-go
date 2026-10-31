@@ -3,7 +3,7 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased
+## v0.7.2 — 2026-10-31
 
 Catches the embedded schemas up with the rest of
 [display-protocol/dp1#55](https://github.com/display-protocol/dp1/pull/55) and pins them to a spec
