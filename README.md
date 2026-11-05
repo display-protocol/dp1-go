@@ -81,6 +81,39 @@ The `sign` package implements DP-1 §7.1 signing: strip signature fields → JCS
 
 - `sign.PayloadHashString` / `sign.VerifyPayloadHash` — compute or verify `sha256:<hex>` for `payload_hash` field.
 
+#### Verifying a whole document's `signatures[]`
+
+Both calls below canonicalize the document **once**, whatever the entry count — each further entry
+adds only its own signature check. Verify through them rather than looping over
+`sign.VerifyMultiSignature` yourself: that pays a full JCS canonicalization per entry, which on a
+multi-megabyte playlist is the dominant cost.
+
+- `sign.VerifyMultiSignaturesJSON(raw) (ok bool, failed []playlist.Signature, err error)` — the
+  verdict plus the entries that failed, in document order. Wrappers for known document types:
+  `sign.VerifyPlaylistSignatures`, `sign.VerifyPlaylistGroupSignatures`,
+  `sign.VerifyChannelSignatures`.
+- `sign.VerifyMultiSignaturesJSONDetailed(raw) ([]sign.SignatureResult, error)` — the same single
+  pass, reporting every entry's own error. Use it when you need to say *which* entry failed and
+  *why*; do not re-run `sign.VerifyMultiSignature` over the `failed` slice to recover errors.
+
+```go
+results, err := sign.VerifyMultiSignaturesJSONDetailed(raw)
+if errors.Is(err, sign.ErrNoSignatures) { /* unsigned document */ }
+if err != nil { /* not a decodable signed document */ }
+for _, r := range results {
+    switch {
+    case r.OK():
+        // r.Signature.Kid attested this document
+    case errors.Is(r.Err, sign.ErrPayloadHashMismatch):
+        // entry r.Index was signed over different content
+    case errors.Is(r.Err, sign.ErrUnsupportedAlg):
+        // entry r.Index uses an algorithm this build does not implement
+    case errors.Is(r.Err, sign.ErrSigInvalid):
+        // entry r.Index did not verify (bad signature, bad base64, bad key length)
+    }
+}
+```
+
 #### Ed25519 (algorithm: `ed25519`)
 
 - `sign.SignMultiEd25519(raw, priv, role, ts)` — create v1.1+ signature with `did:key` kid.

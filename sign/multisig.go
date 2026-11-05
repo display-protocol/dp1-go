@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -17,23 +16,40 @@ import (
 // registered via [RegisterVerifier].
 //
 // The verification process:
-//  1. Validate payload_hash matches the canonical document digest
-//  2. Compute the DP-1 signing digest (SHA-256 of JCS + LF)
+//  1. Compute the DP-1 signing digest once (SHA-256 of JCS + LF)
+//  2. Validate payload_hash matches that digest
 //  3. Look up the algorithm-specific verifier from the registry
 //  4. Decode the base64url signature
 //  5. Delegate verification to the algorithm-specific verifier
 //
-// Returns ErrUnsupportedAlg if sig.Alg is not registered, ErrSigInvalid if signature
-// verification fails, or another error for parsing/validation failures.
+// Returns [ErrPayloadHashMismatch] if the entry asserts a different document,
+// [ErrUnsupportedAlg] if sig.Alg is not registered, [ErrSigInvalid] if signature verification
+// fails, or another error for parsing/validation failures.
+//
+// This canonicalizes rawPlaylistJSON on every call, so verifying N entries of one document
+// through it costs N canonicalizations. To verify a whole document's "signatures" array, use
+// [VerifyMultiSignaturesJSON] or [VerifyMultiSignaturesJSONDetailed] instead: they canonicalize
+// once and then check each entry against that one digest.
 func VerifyMultiSignature(rawPlaylistJSON []byte, sig playlist.Signature) error {
-	// Verify payload_hash assertion
-	if err := VerifyPayloadHash(rawPlaylistJSON, sig.PayloadHash); err != nil {
+	// One canonicalization yields both the payload_hash string and the 32 bytes the verifier
+	// signs over; this function used to compute the same digest twice.
+	digest, err := newDocumentDigest(rawPlaylistJSON)
+	if err != nil {
 		return err
 	}
+	return verifyEntryAgainstDigest(digest, sig)
+}
 
-	// Compute DP-1 signing digest (same for all algorithms)
-	digest, err := signingDigest(rawPlaylistJSON)
-	if err != nil {
+// verifyEntryAgainstDigest performs the per-entry half of verification against a digest that has
+// already been computed for the document. Everything here is cheap relative to canonicalization:
+// a string compare, a registry lookup, a base64 decode and one signature check.
+//
+// The order of the checks is part of the public contract and must not be reordered: payload_hash
+// first (it says the entry is about a different document, which is not a signature failure), then
+// the algorithm lookup, then the signature itself.
+func verifyEntryAgainstDigest(digest documentDigest, sig playlist.Signature) error {
+	// Verify payload_hash assertion
+	if err := digest.verifyPayloadHash(sig.PayloadHash); err != nil {
 		return err
 	}
 
@@ -50,7 +66,7 @@ func VerifyMultiSignature(rawPlaylistJSON []byte, sig playlist.Signature) error 
 	}
 
 	// Delegate to algorithm-specific verification
-	return verifier.VerifySignature(sig.Kid, sigBytes, digest)
+	return verifier.VerifySignature(sig.Kid, sigBytes, digest.sum)
 }
 
 // VerifyMultiEd25519 verifies one multi-signature entry when alg is ed25519.
@@ -75,8 +91,13 @@ func VerifyMultiEd25519(rawPlaylistJSON []byte, sig playlist.Signature) error {
 //
 // When err is nil: ok is true when every signature verifies. On verification failure, ok is false
 // and failed lists each signature object that did not verify, in array order; failed is nil when ok
-// is true. For the specific verification error, call [VerifyMultiSignature] with the same raw bytes
-// and the returned [playlist.Signature].
+// is true.
+//
+// This function discards the per-entry errors. If you need to know *why* each entry failed, call
+// [VerifyMultiSignaturesJSONDetailed] instead — it does the same single canonicalization and
+// returns every entry's own error. Do not re-run [VerifyMultiSignature] over the returned failed
+// entries to recover their errors: that pays for one whole-document canonicalization per entry,
+// which is the cost this pair of functions exists to avoid.
 //
 // Supported algorithms: ed25519 (did:key), eip191 (did:pkh). Entries with unsupported alg values
 // are treated as failed verification (not skipped): they are included in failed the same as any
@@ -85,24 +106,87 @@ func VerifyMultiEd25519(rawPlaylistJSON []byte, sig playlist.Signature) error {
 // Prefer [VerifyPlaylistSignatures], [VerifyPlaylistGroupSignatures], or [VerifyChannelSignatures]
 // at call sites when the document type is known, for clarity; they delegate here.
 func VerifyMultiSignaturesJSON(rawSignedJSON []byte) (ok bool, failed []playlist.Signature, err error) {
-	var envelope struct {
-		Signatures []playlist.Signature `json:"signatures"`
-	}
-	if err := json.Unmarshal(rawSignedJSON, &envelope); err != nil {
+	results, err := VerifyMultiSignaturesJSONDetailed(rawSignedJSON)
+	if err != nil {
 		return false, nil, err
 	}
-	if len(envelope.Signatures) == 0 {
-		return false, nil, ErrNoSignatures
-	}
-	for _, sig := range envelope.Signatures {
-		if verr := VerifyMultiSignature(rawSignedJSON, sig); verr != nil {
-			failed = append(failed, sig)
+	for _, r := range results {
+		if r.Err != nil {
+			failed = append(failed, r.Signature)
 		}
 	}
 	if len(failed) == 0 {
 		return true, nil, nil
 	}
 	return false, failed, nil
+}
+
+// SignatureResult is one entry's outcome from [VerifyMultiSignaturesJSONDetailed].
+type SignatureResult struct {
+	// Index is the entry's position in the document's "signatures" array, which is also its
+	// position in the returned slice. It is carried on the result so a single result stays
+	// self-describing once a caller has filtered or logged it away from the slice.
+	Index int
+
+	// Signature is the entry as decoded from the document.
+	Signature playlist.Signature
+
+	// Err is nil when the entry verified; otherwise it is exactly what
+	// [VerifyMultiSignature] would have returned for this entry and document — one of
+	// [ErrPayloadHashMismatch], [ErrUnsupportedAlg], [ErrSigInvalid] (wrapping the base64
+	// decode or key-length failure where there is one), or a kid parsing error. Classify it
+	// with errors.Is.
+	Err error
+}
+
+// OK reports whether this entry verified.
+func (r SignatureResult) OK() bool { return r.Err == nil }
+
+// VerifyMultiSignaturesJSONDetailed verifies every entry in a document's top-level "signatures"
+// array and returns each entry's own outcome, in array order. It is the detailed twin of
+// [VerifyMultiSignaturesJSON]: same documents, same decoding, same per-entry rules and the same
+// single canonicalization of the document — it only reports more.
+//
+// Use it when a caller has to say which entry failed and why: labeling a failure from
+// [VerifyMultiSignaturesJSON]'s failed slice would otherwise mean re-verifying each entry, and
+// each of those re-verifications canonicalizes the whole document again. A document with N
+// entries costs one canonicalization here however large N is.
+//
+// Returns a non-nil err, and nil results, under exactly the conditions
+// [VerifyMultiSignaturesJSON] returns one: rawSignedJSON is not valid JSON, "signatures" cannot be
+// decoded as an array of signature objects, or it is missing or empty ([ErrNoSignatures]).
+// Otherwise results has one entry per signature, and the document verifies when every
+// [SignatureResult.OK] is true.
+func VerifyMultiSignaturesJSONDetailed(rawSignedJSON []byte) ([]SignatureResult, error) {
+	var envelope struct {
+		Signatures []playlist.Signature `json:"signatures"`
+	}
+	if err := json.Unmarshal(rawSignedJSON, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Signatures) == 0 {
+		return nil, ErrNoSignatures
+	}
+
+	// The one canonicalization. DP-1 §7.1 strips the top-level "signature" and "signatures" keys
+	// before canonicalizing, so this digest does not depend on any entry: it is the same 32 bytes
+	// for all of them, whatever the array holds.
+	digest, digestErr := newDocumentDigest(rawSignedJSON)
+
+	results := make([]SignatureResult, len(envelope.Signatures))
+	for i, sig := range envelope.Signatures {
+		// A failure to compute the document digest is reported on every entry rather than as
+		// the call's error, so each entry's Err stays exactly what VerifyMultiSignature would
+		// return for it, and VerifyMultiSignaturesJSON's (ok, failed) contract is unchanged.
+		// Unreachable in practice: the decode above already proved rawSignedJSON is a JSON
+		// object, which is the only thing stripping and JCS can fail on.
+		err := digestErr
+		if err == nil {
+			err = verifyEntryAgainstDigest(digest, sig)
+		}
+		results[i] = SignatureResult{Index: i, Signature: sig, Err: err}
+	}
+	return results, nil
 }
 
 // VerifyPlaylistSignatures verifies v1.1+ signatures in a core playlist JSON document. It is
@@ -127,21 +211,19 @@ func VerifyChannelSignatures(rawSignedJSON []byte) (ok bool, failed []playlist.S
 // This is the unified signing function that works with any algorithm (ed25519, eip191, etc.).
 //
 // The signing process:
-//  1. Compute the DP-1 signing digest (SHA-256 of JCS + LF)
-//  2. Compute payload_hash for the signature assertion field
+//  1. Compute the DP-1 signing digest once (SHA-256 of JCS + LF)
+//  2. Take payload_hash for the signature assertion field from that same digest
 //  3. Call signer.Sign(digest) to get kid and signature bytes
 //  4. Encode signature as base64url and assemble the Signature struct
 //
 // Returns a complete playlist.Signature ready to be added to a document's "signatures" array.
 func SignMulti(rawPlaylistJSON []byte, signer Signer, role string, tsRFC3339 string) (playlist.Signature, error) {
-	digest, err := signingDigest(rawPlaylistJSON)
+	digest, err := newDocumentDigest(rawPlaylistJSON)
 	if err != nil {
 		return playlist.Signature{}, err
 	}
 
-	payloadHash := "sha256:" + hex.EncodeToString(digest[:])
-
-	kid, sigBytes, err := signer.Sign(digest)
+	kid, sigBytes, err := signer.Sign(digest.sum)
 	if err != nil {
 		return playlist.Signature{}, err
 	}
@@ -150,7 +232,7 @@ func SignMulti(rawPlaylistJSON []byte, signer Signer, role string, tsRFC3339 str
 		Alg:         signer.Alg(),
 		Kid:         kid,
 		Ts:          tsRFC3339,
-		PayloadHash: payloadHash,
+		PayloadHash: digest.hash,
 		Role:        role,
 		Sig:         base64.RawURLEncoding.EncodeToString(sigBytes),
 	}, nil
