@@ -9,11 +9,15 @@ import (
 
 // Sentinel errors re-exported so applications can use a single import path with
 // errors.Is / errors.As (e.g. signature verification vs JSON Schema validation).
+//
+// Every exported sentinel in the sign package is mirrored here, in the same change that adds it:
+// a consumer that imports only this package must be able to classify any error the SDK returns.
 var (
-	ErrValidation     = validate.ErrValidation
-	ErrSigInvalid     = sign.ErrSigInvalid
-	ErrUnsupportedAlg = sign.ErrUnsupportedAlg
-	ErrNoSignatures   = sign.ErrNoSignatures
+	ErrValidation          = validate.ErrValidation
+	ErrSigInvalid          = sign.ErrSigInvalid
+	ErrUnsupportedAlg      = sign.ErrUnsupportedAlg
+	ErrNoSignatures        = sign.ErrNoSignatures
+	ErrPayloadHashMismatch = sign.ErrPayloadHashMismatch
 )
 
 // ErrorCode is a stable string for DP-1 §14 (player → UI) mapping where applicable,

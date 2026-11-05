@@ -3,6 +3,57 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased
+
+Verifying a document's `signatures[]` now costs **one** JCS canonicalization of the document
+however many entries it carries, and a caller can learn from that same pass which entries failed
+and why.
+
+`VerifyMultiSignature` computed the DP-1 §7.1 digest twice per entry — once inside
+`VerifyPayloadHash`, once for the bytes it hands the algorithm verifier — and
+`VerifyMultiSignaturesJSON` repeated both inside its loop, so an N-entry document paid 2N
+canonicalizations of the whole document. The digest is JCS of the document with the top-level
+`signature` / `signatures` keys stripped, so it does not depend on the entry being verified: the
+2N values were byte-identical by construction. On an 8.5 MiB playlist one canonicalization is
+~200 ms on a laptop, so 16 entries cost ~6.3 s where ~200 ms was the whole arithmetic — and
+considerably worse on a player device, which is why
+[feral-file/feral-file#3597](https://github.com/feral-file/feral-file/issues/3597) refuses large
+documents before doing any cryptography.
+
+### Added
+
+- `sign.VerifyMultiSignaturesJSONDetailed(raw) ([]sign.SignatureResult, error)` — verifies every
+  entry in a document's `signatures` array and returns each entry's own outcome in array order:
+  `SignatureResult{Index int, Signature playlist.Signature, Err error}`, with `OK()` for
+  `Err == nil`. Each `Err` is exactly what `VerifyMultiSignature` would return for that entry, so
+  it is classifiable with `errors.Is`. Additive: `VerifyMultiSignaturesJSON`'s signature is
+  unchanged. Use it instead of re-running `VerifyMultiSignature` over the `failed` slice to
+  recover errors — that re-run is one whole-document canonicalization per entry.
+- `sign.ErrPayloadHashMismatch` — the sentinel for a `payload_hash` that does not match the
+  canonical document digest, previously returnable only as an unwrapped error. Its message is
+  byte-identical to before (no `dp1:` prefix) because consumers match it as a substring. Also
+  re-exported as `dp1.ErrPayloadHashMismatch`, so a consumer importing only the root package can
+  classify it like the other sentinels.
+
+### Changed
+
+- `VerifyMultiSignature` computes the document digest once instead of twice. Its signature, its
+  error values and its order of checks (payload_hash before signature) are unchanged.
+- `VerifyMultiSignaturesJSON` and the `VerifyPlaylistSignatures` / `VerifyPlaylistGroupSignatures`
+  / `VerifyChannelSignatures` wrappers canonicalize once for the whole call rather than twice per
+  entry. Their signatures, `ErrNoSignatures` on a missing or empty array, the AND semantics of
+  `ok` and `failed` being in document order are unchanged.
+- `SignMulti` takes `payload_hash` from the digest it already computed rather than re-deriving the
+  hex string.
+
+### Compatibility
+
+No change to what is canonicalized, hashed or signed. DP-1 §7.1 is implemented exactly as before:
+strip `signature` / `signatures`, JCS (RFC 8785), append one LF, SHA-256, Ed25519 or EIP-191 over
+those 32 bytes. `sign/compat_v072_test.go` pins this with fixtures captured from v0.7.2 — the
+`payload_hash` and both algorithms' signature bytes for a fixed document and fixed keys — so a
+document signed by v0.7.2 verifies here and one signed here verifies there.
+
 ## v0.7.2 — 2026-10-31
 
 Catches the embedded schemas up with the rest of

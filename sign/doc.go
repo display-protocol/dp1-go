@@ -46,10 +46,22 @@ enforced by the SDK. Applications should validate timestamp requirements based o
 Use [VerifyMultiSignaturesJSON] to verify all signatures in a document's "signatures" array.
 The function returns ok=true when all signatures verify, or ok=false with a list of failed
 signatures. Convenience wrappers: [VerifyPlaylistSignatures], [VerifyPlaylistGroupSignatures],
-[VerifyChannelSignatures].
+[VerifyChannelSignatures]. Use [VerifyMultiSignaturesJSONDetailed] when a caller has to report
+which entry failed and with which error: it returns a [SignatureResult] per entry, in array order.
 
 Documents can mix Ed25519 and Ethereum signatures. Each signature is verified independently
 using its algorithm-specific verifier from the registry.
+
+# Cost of Verification
+
+The §7.1 digest is computed over the document with "signature" and "signatures" stripped, so it
+is the same 32 bytes for every entry. Both document-level functions above exploit that: they
+canonicalize the document once per call, whatever the entry count, and each further entry adds
+only its own signature check. [VerifyMultiSignature] canonicalizes on every call, so verifying a
+document by looping over it — or by re-running it to recover the errors behind
+[VerifyMultiSignaturesJSON]'s failed slice — costs one whole-document canonicalization per entry.
+That matters at size: JCS of an 8.5 MiB playlist is ~200 ms on a laptop and considerably more on
+a player device, next to tens of microseconds for an Ed25519 verification.
 
 # Algorithm Registry
 
