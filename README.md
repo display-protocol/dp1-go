@@ -104,7 +104,7 @@ for _, r := range results {
     switch {
     case r.OK():
         // r.Signature.Kid attested this document
-    case errors.Is(r.Err, sign.ErrPayloadHashMismatch):
+    case errors.Is(r.Err, sign.ErrPayloadHashMismatch): // or dp1.ErrPayloadHashMismatch
         // entry r.Index was signed over different content
     case errors.Is(r.Err, sign.ErrUnsupportedAlg):
         // entry r.Index uses an algorithm this build does not implement

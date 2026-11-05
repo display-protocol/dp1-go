@@ -31,7 +31,9 @@ documents before doing any cryptography.
   recover errors — that re-run is one whole-document canonicalization per entry.
 - `sign.ErrPayloadHashMismatch` — the sentinel for a `payload_hash` that does not match the
   canonical document digest, previously returnable only as an unwrapped error. Its message is
-  byte-identical to before (no `dp1:` prefix) because consumers match it as a substring.
+  byte-identical to before (no `dp1:` prefix) because consumers match it as a substring. Also
+  re-exported as `dp1.ErrPayloadHashMismatch`, so a consumer importing only the root package can
+  classify it like the other sentinels.
 
 ### Changed
 
