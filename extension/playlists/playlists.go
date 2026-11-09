@@ -20,9 +20,11 @@ type Note struct {
 // independently signable Playlist; this entry only names it and how to present it, and the
 // satellite's own document carries no back-reference to its parent (dp1#63).
 type Satellite struct {
-	// Playlist is the URI of the satellite's own playlist.
+	// Playlist is the absolute URI of the satellite's own playlist. Not a channel-relative
+	// or otherwise relative address: the schema's format:uri already requires an absolute
+	// URI, and this field defines no relative-resolution rule.
 	Playlist string `json:"playlist"`
-	// Kind is open vocabulary (as in Visibility and content-rating): e.g. "burn",
+	// Kind is open vocabulary (as in content-rating): e.g. "burn",
 	// "mementos", "catalog", "launch-party". Any string is valid; an unrecognized value is
 	// still a valid satellite, just an unlabeled one.
 	Kind string `json:"kind"`
