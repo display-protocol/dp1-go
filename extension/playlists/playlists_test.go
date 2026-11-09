@@ -11,9 +11,10 @@ func TestOverlay_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
 	dur := 20.0
 	o := Overlay{
-		Note:     &Note{Text: "Interlude", Duration: &dur},
-		Curators: []identity.Entity{{Name: "A", Key: "did:key:z"}},
-		Summary:  "S",
+		Note:       &Note{Text: "Interlude", Duration: &dur},
+		Curators:   []identity.Entity{{Name: "A", Key: "did:key:z"}},
+		Summary:    "S",
+		Satellites: []Satellite{{Playlist: "https://feed.example/p/burn", Kind: "burn"}},
 		DynamicQuery: &DynamicQuery{
 			Profile:  "graphql-v1",
 			Endpoint: "https://idx.example/gql",
@@ -37,5 +38,8 @@ func TestOverlay_JSONRoundTrip(t *testing.T) {
 	}
 	if out.Note == nil || out.Note.Text != "Interlude" || out.Note.Duration == nil || *out.Note.Duration != 20 {
 		t.Fatalf("note: %+v", out.Note)
+	}
+	if len(out.Satellites) != 1 || out.Satellites[0].Playlist != "https://feed.example/p/burn" || out.Satellites[0].Kind != "burn" {
+		t.Fatalf("satellites: %+v", out.Satellites)
 	}
 }

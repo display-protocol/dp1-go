@@ -13,6 +13,27 @@ type Note struct {
 	Author *identity.Entity `json:"author,omitempty"`
 }
 
+// Satellite names a smaller playlist published around this one — a burn record, a set of
+// mementos, a catalog or launch-party edition — that a consumer implementing this section
+// SHOULD present as a labeled section of this playlist's page rather than as a show of its
+// own (§3.8). The satellite's own playlist remains a complete, independently valid,
+// independently signable Playlist; this entry only names it and how to present it, and the
+// satellite's own document carries no back-reference to its parent (dp1#63).
+type Satellite struct {
+	// Playlist is the URI of the satellite's own playlist.
+	Playlist string `json:"playlist"`
+	// Kind is open vocabulary (as in Visibility and content-rating): e.g. "burn",
+	// "mementos", "catalog", "launch-party". Any string is valid; an unrecognized value is
+	// still a valid satellite, just an unlabeled one.
+	Kind string `json:"kind"`
+	// Title is a heading shown above the satellite's items (1-200 characters), when
+	// different from a human-readable form of Kind.
+	Title string `json:"title,omitempty"`
+	// Note is one paragraph of context shown above the satellite's items (1-2000
+	// characters), e.g. what a memento is and when it was given out.
+	Note string `json:"note,omitempty"`
+}
+
 // DynamicQuery configures dynamic item fetching from an indexer.
 type DynamicQuery struct {
 	Profile         string            `json:"profile"`
@@ -43,4 +64,7 @@ type Overlay struct {
 	DynamicQuery *DynamicQuery   `json:"dynamicQuery,omitempty"`
 	// Visibility is the listing request; nil is absent (public). See playlist.Playlist.Visibility (§3.7).
 	Visibility *string `json:"visibility,omitempty"`
+	// Satellites names smaller playlists published around this one, rendered as labeled
+	// sections of this playlist's page. See playlist.Playlist.Satellites (§3.8).
+	Satellites []Satellite `json:"satellites,omitempty"`
 }

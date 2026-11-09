@@ -335,6 +335,64 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_visibilityAndNoteAuthor(
 	}
 }
 
+// Satellites (§3.8) arrived with dp1#63, pending — see internal/schema/dp1-commit.txt.
+// The vendored schema accepts them ahead of the pin so this SDK can be ready once dp1#63
+// merges; the Go types must not drop them on decode.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_satellites(t *testing.T) {
+	t.Parallel()
+	satellites := `"satellites":[
+		{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-launch-party-exclusive-wci",
+		 "kind":"launch-party","title":"Launch Party Exclusive","note":"One edition given to guests."},
+		{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":"burn"}
+	],`
+	doc := []byte(`{"dpVersion":"1.1.0","id":"385f79b6-a45f-4c1c-8080-e93a192adccc","title":"P",
+		"created":"2026-10-30T00:00:00Z",` + satellites + `
+		"items":[{"source":"https://a"}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Satellites) != 2 {
+		t.Fatalf("satellites: got %+v", out.Satellites)
+	}
+	if s := out.Satellites[0]; s.Playlist != "https://feed.feralfile.com/playlists/peer-to-peer-launch-party-exclusive-wci" ||
+		s.Kind != "launch-party" || s.Title != "Launch Party Exclusive" || s.Note != "One edition given to guests." {
+		t.Fatalf("satellite[0]: %+v", s)
+	}
+	if s := out.Satellites[1]; s.Playlist != "https://feed.feralfile.com/playlists/peer-to-peer-burn" || s.Kind != "burn" ||
+		s.Title != "" || s.Note != "" {
+		t.Fatalf("satellite[1]: %+v", s)
+	}
+	decodeStrict(t, doc, &playlist.Playlist{})
+
+	round, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(round), `"kind":"launch-party"`) || !strings.Contains(string(round), `"kind":"burn"`) {
+		t.Fatalf("satellites lost on re-encode: %s", round)
+	}
+
+	absent := strings.Replace(string(doc), satellites, "", 1)
+	if out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(absent)); err != nil || out.Satellites != nil {
+		t.Fatalf("absent satellites must decode as nil: %v %+v", err, out)
+	}
+
+	// playlist and kind are REQUIRED on each Satellite entry.
+	good := `{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":"burn"}`
+	for _, bad := range []string{
+		`{"kind":"burn"}`,
+		`{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn"}`,
+		`{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":1}`,
+	} {
+		src := strings.Replace(string(doc), good, bad, 1)
+		if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(src)); err == nil {
+			t.Fatalf("satellite %s: expected schema rejection", bad)
+		}
+	}
+}
+
 // TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema drives the two
 // dp1#55 core-schema fields through the real embedded schema rather than through Go
 // types alone, in both of seriesId's wire forms.

@@ -465,6 +465,39 @@ func TestPlaylist_OpenAtAndLinks(t *testing.T) {
 	}
 }
 
+// TestPlaylist_Satellites locks in dp1#63: satellites[] names smaller playlists rendered
+// as labeled sections of this playlist's page, round-tripping playlist/kind/title/note.
+func TestPlaylist_Satellites(t *testing.T) {
+	t.Parallel()
+	p := Playlist{
+		DPVersion: "1.1.0",
+		Title:     "T",
+		Items:     []PlaylistItem{{Source: "https://a"}},
+		Satellites: []playlists.Satellite{
+			{Playlist: "https://feed.example/p/burn", Kind: "burn"},
+			{Playlist: "https://feed.example/p/launch-party", Kind: "launch-party",
+				Title: "Launch Party Exclusive", Note: "One edition given to guests."},
+		},
+	}
+	b, err := json.Marshal(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out Playlist
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Satellites) != 2 {
+		t.Fatalf("satellites: %+v", out.Satellites)
+	}
+	if out.Satellites[0].Playlist != p.Satellites[0].Playlist || out.Satellites[0].Kind != "burn" {
+		t.Fatalf("satellite[0]: %+v", out.Satellites[0])
+	}
+	if out.Satellites[1].Title != "Launch Party Exclusive" || out.Satellites[1].Note != "One edition given to guests." {
+		t.Fatalf("satellite[1]: %+v", out.Satellites[1])
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func ratingPtr(r contentrating.Rating) *contentrating.Rating { return &r }
