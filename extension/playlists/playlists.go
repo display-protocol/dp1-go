@@ -1,7 +1,11 @@
 // Package playlists contains types for the DP-1 "playlists" extension (draft): optional fields on a playlist document.
 package playlists
 
-import "github.com/display-protocol/dp1-go/extension/identity"
+import (
+	"encoding/json"
+
+	"github.com/display-protocol/dp1-go/extension/identity"
+)
 
 // Note is an experimental intermission card: short artist-authored text before the playlist or an item (not DP-1 core).
 type Note struct {
@@ -34,6 +38,55 @@ type Satellite struct {
 	// Note is one paragraph of context shown above the satellite's items (1-2000
 	// characters), e.g. what a memento is and when it was given out.
 	Note string `json:"note,omitempty"`
+}
+
+// UnmarshalJSON decodes a Satellite, taking every member by its exact JSON key instead of
+// trusting encoding/json's own field matching for any of them.
+//
+// The playlists-extension schema's Satellite definition permits properties it does not
+// describe, so a document carrying both "playlist" and an unrecognized "Playlist" (or any other
+// case variant of playlist/kind/title/note) validates — the second is merely an unknown
+// property, of any JSON type. encoding/json's case-insensitive fallback would nonetheless let
+// it silently overwrite the validated value (or, for a non-string value, fail the decode
+// outright), the same risk PlaylistItem's content-rating fields avoid (playlist/playlist.go) by
+// exact-key lookup. Unlike Playlist, Satellite is a leaf type with no known embedder, so giving
+// it its own UnmarshalJSON carries none of the method-promotion risk documented on
+// Playlist.Visibility.
+//
+// Every value comes from a map[string]json.RawMessage decode of data, never from a plain
+// json.Unmarshal into a typed struct. A typed decode — even used only to validate shape, with
+// its field values discarded — would still run encoding/json's own case-insensitive field
+// matching as a side effect: a document carrying only a wrong-case, wrongly-typed key (no
+// exact-case counterpart at all, e.g. {"playlist":"...","kind":"...","Title":5}, a number) would
+// have that value matched onto the typed Title string field and fail the whole decode with a
+// type error — rejecting a document the schema accepts (it has no additionalProperties:false),
+// and, one level up, making decodeSatellitesExact's shape tolerance (parse.go) silently drop
+// the entire satellites array for a document this method was never meant to reject at all.
+// Decoding into the map sidesteps struct field matching entirely: a map key is a literal string,
+// and only the four exact keys below are ever read.
+func (s *Satellite) UnmarshalJSON(data []byte) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	*s = Satellite{}
+	for key, field := range map[string]*string{
+		"playlist": &s.Playlist,
+		"kind":     &s.Kind,
+		"title":    &s.Title,
+		"note":     &s.Note,
+	} {
+		raw, ok := members[key]
+		if !ok {
+			continue
+		}
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return err
+		}
+		*field = v
+	}
+	return nil
 }
 
 // DynamicQuery configures dynamic item fetching from an indexer.
