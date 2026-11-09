@@ -22,6 +22,18 @@ documents before doing any cryptography.
 
 ### Added
 
+- `playlist.Playlist.Satellites` and `playlists.Overlay.Satellites` (`[]playlists.Satellite`,
+  each with `Playlist string`, `Kind string`, `Title string`, `Note string`) — the playlists
+  extension's satellites (§3.8, draft): smaller playlists published around this one (a burn
+  record, a memento run, a catalog or launch-party edition) that `satellites[]` names on the
+  parent so a consumer renders them as labeled sections of its page instead of peer shows.
+  Playlist-only; does not touch items, channels, or `channel.playlists[]` membership. The
+  vendored `extensions/playlists/schema.json` accepts `satellites` ahead of
+  `internal/schema/dp1-commit.txt`'s pin — see that PR's `Depends on` section —
+  because the upstream PR adding it ([display-protocol/dp1#63](https://github.com/display-protocol/dp1/pull/63))
+  is still a draft. `scripts/check-schema-sync.sh` therefore reports
+  `internal/schema/extensions/playlists/schema.json` as differing from the pinned commit until
+  dp1#63 merges and the pin moves.
 - `sign.VerifyMultiSignaturesJSONDetailed(raw) ([]sign.SignatureResult, error)` — verifies every
   entry in a document's `signatures` array and returns each entry's own outcome in array order:
   `SignatureResult{Index int, Signature playlist.Signature, Err error}`, with `OK()` for

@@ -335,6 +335,155 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_visibilityAndNoteAuthor(
 	}
 }
 
+// Satellites (§3.8) arrived with dp1#63, pending — see internal/schema/dp1-commit.txt.
+// The vendored schema accepts them ahead of the pin so this SDK can be ready once dp1#63
+// merges; the Go types must not drop them on decode.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_satellites(t *testing.T) {
+	t.Parallel()
+	satellites := `"satellites":[
+		{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-launch-party-exclusive-wci",
+		 "kind":"launch-party","title":"Launch Party Exclusive","note":"One edition given to guests."},
+		{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":"burn"}
+	],`
+	doc := []byte(`{"dpVersion":"1.1.0","id":"385f79b6-a45f-4c1c-8080-e93a192adccc","title":"P",
+		"created":"2026-10-30T00:00:00Z",` + satellites + `
+		"items":[{"source":"https://a"}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Satellites) != 2 {
+		t.Fatalf("satellites: got %+v", out.Satellites)
+	}
+	if s := out.Satellites[0]; s.Playlist != "https://feed.feralfile.com/playlists/peer-to-peer-launch-party-exclusive-wci" ||
+		s.Kind != "launch-party" || s.Title != "Launch Party Exclusive" || s.Note != "One edition given to guests." {
+		t.Fatalf("satellite[0]: %+v", s)
+	}
+	if s := out.Satellites[1]; s.Playlist != "https://feed.feralfile.com/playlists/peer-to-peer-burn" || s.Kind != "burn" ||
+		s.Title != "" || s.Note != "" {
+		t.Fatalf("satellite[1]: %+v", s)
+	}
+	decodeStrict(t, doc, &playlist.Playlist{})
+
+	round, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(round), `"kind":"launch-party"`) || !strings.Contains(string(round), `"kind":"burn"`) {
+		t.Fatalf("satellites lost on re-encode: %s", round)
+	}
+
+	absent := strings.Replace(string(doc), satellites, "", 1)
+	if out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(absent)); err != nil || out.Satellites != nil {
+		t.Fatalf("absent satellites must decode as nil: %v %+v", err, out)
+	}
+
+	// playlist and kind are REQUIRED on each Satellite entry.
+	good := `{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":"burn"}`
+	for _, bad := range []string{
+		`{"kind":"burn"}`,
+		`{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn"}`,
+		`{"playlist":"https://feed.feralfile.com/playlists/peer-to-peer-burn","kind":1}`,
+	} {
+		src := strings.Replace(string(doc), good, bad, 1)
+		if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension([]byte(src)); err == nil {
+			t.Fatalf("satellite %s: expected schema rejection", bad)
+		}
+	}
+}
+
+// TestParseAndValidatePlaylist_coreToleratesTypeMismatchedSatellites mirrors
+// TestParseAndValidatePlaylist_coreToleratesTypeMismatchedInlineManifest: satellites is not
+// part of the core or content-rating schemas, so a core-valid document carrying a "satellites"
+// member of the wrong JSON shape must still decode on the paths that never validate it — the
+// same tolerance the field had before it existed as a typed struct field at all.
+func TestParseAndValidatePlaylist_coreToleratesTypeMismatchedSatellites(t *testing.T) {
+	t.Parallel()
+	for name, satellites := range map[string]string{
+		"satellites_is_a_number":              `17`,
+		"satellites_is_an_object":             `{"foo":"bar"}`,
+		"satellite_entry_has_non_string_kind": `[{"playlist":"https://feed.example/burn","kind":1}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			doc := []byte(`{"dpVersion":"1.1.0","title":"P","items":[{"source":"https://a"}],
+				"satellites":` + satellites + `,
+				"signatures":[` + dummySignatureJSON + `]}`)
+			if err := dp1.PlaylistCoreSchemaValidate(doc); err != nil {
+				t.Fatalf("core schema should tolerate the unknown field: %v", err)
+			}
+			out, err := dp1.ParseAndValidatePlaylist(doc)
+			if err != nil {
+				t.Fatalf("core parse must tolerate it too: %v", err)
+			}
+			if out.Satellites != nil {
+				t.Fatalf("expected nil satellites, got %+v", out.Satellites)
+			}
+
+			if err := dp1.PlaylistWithContentRatingExtensionSchemaValidate(doc); err != nil {
+				t.Fatalf("content-rating schema should tolerate the unknown field: %v", err)
+			}
+			if out, err := dp1.ParseAndValidatePlaylistWithContentRatingExtension(doc); err != nil || out.Satellites != nil {
+				t.Fatalf("content-rating parse must tolerate it too: %v %+v", err, out)
+			}
+		})
+	}
+
+	// The playlists-extension-aware paths keep rejecting a malformed satellites member: the
+	// tolerance above never reaches them, because schema validation runs first.
+	bad := []byte(`{"dpVersion":"1.1.0","title":"P","items":[{"source":"https://a"}],"satellites":17,
+		"signatures":[` + dummySignatureJSON + `]}`)
+	if _, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(bad); err == nil {
+		t.Fatal("expected schema rejection of a non-array satellites on the extension-aware path")
+	}
+}
+
+// TestParseAndValidatePlaylistWithPlaylistsExtension_satellitesExactKey locks in that
+// "satellites" is read by its exact JSON key: the schema treats a differently-cased member as
+// merely unknown, but encoding/json's case-insensitive field matching would otherwise let it
+// silently overwrite — or, decoded first, be overwritten by — the validated array.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_satellitesExactKey(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{"dpVersion":"1.1.0","title":"P","items":[{"source":"https://a"}],
+		"satellites":[{"playlist":"https://feed.example/burn","kind":"burn"}],"Satellites":[],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	if err := dp1.PlaylistWithPlaylistsExtensionSchemaValidate(doc); err != nil {
+		t.Fatalf("the unrecognized uppercase member is merely an unknown property: %v", err)
+	}
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Satellites) != 1 || out.Satellites[0].Playlist != "https://feed.example/burn" {
+		t.Fatalf("the validated satellites member must survive: %+v", out.Satellites)
+	}
+}
+
+// TestParseAndValidatePlaylistWithPlaylistsExtension_satelliteUnknownPropertyWrongType locks
+// in the full-path sibling of satellitesExactKey above: a satellite entry carrying an
+// unrecognized, differently-cased property whose value is not even a string (e.g. a number).
+// The schema still accepts it (Satellite has no additionalProperties:false), and the decode
+// must not reject or silently drop the whole satellites array because of it — that regressed
+// a fix made earlier in this same series, where a plain typed shape-check let the unrecognized
+// property's case-insensitive match fail the decode.
+func TestParseAndValidatePlaylistWithPlaylistsExtension_satelliteUnknownPropertyWrongType(t *testing.T) {
+	t.Parallel()
+	doc := []byte(`{"dpVersion":"1.1.0","title":"P","items":[{"source":"https://a"}],
+		"satellites":[{"playlist":"https://feed.example/burn","kind":"burn","Title":5}],
+		"signatures":[` + dummySignatureJSON + `]}`)
+	if err := dp1.PlaylistWithPlaylistsExtensionSchemaValidate(doc); err != nil {
+		t.Fatalf("schema should accept this doc: %v", err)
+	}
+	out, err := dp1.ParseAndValidatePlaylistWithPlaylistsExtension(doc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Satellites) != 1 || out.Satellites[0].Playlist != "https://feed.example/burn" || out.Satellites[0].Title != "" {
+		t.Fatalf("satellite lost or corrupted: %+v", out.Satellites)
+	}
+}
+
 // TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema drives the two
 // dp1#55 core-schema fields through the real embedded schema rather than through Go
 // types alone, in both of seriesId's wire forms.

@@ -59,6 +59,13 @@ type Playlist struct {
 	// not, because a Playlist.UnmarshalJSON would be promoted into structs that embed Playlist
 	// (ffos-user's dp1.Playlist does) and take over their decoding, dropping their own fields.
 	Visibility *string `json:"visibility,omitempty"`
+	// Satellites names smaller playlists published around this one — a burn record, a
+	// memento run, a catalog or launch-party edition — rendered as labeled sections of this
+	// playlist's page rather than peer shows (playlists extension §3.8). Does not affect
+	// Channel.Playlists[] membership or ordering: a satellite's playlist stays a member
+	// there, unchanged, for playback. Parent-only: a satellite's own playlist carries no
+	// back-reference (dp1#63, pending — see internal/schema/dp1-commit.txt).
+	Satellites []playlists.Satellite `json:"satellites,omitempty"`
 }
 
 // Defaults holds playlist-level defaults inherited by items.
