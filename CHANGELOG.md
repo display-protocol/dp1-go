@@ -3,9 +3,12 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
-## Unreleased
+## v0.7.3 — 2026-11-09
 
-Verifying a document's `signatures[]` now costs **one** JCS canonicalization of the document
+Adds the playlists extension's `satellites` field ([display-protocol/dp1#62](https://github.com/display-protocol/dp1/pull/62),
+[#63](https://github.com/display-protocol/dp1/pull/63), now merged) and fixes two decoding
+invariants the new field broke, alongside a signature-verification performance fix:
+verifying a document's `signatures[]` now costs **one** JCS canonicalization of the document
 however many entries it carries, and a caller can learn from that same pass which entries failed
 and why.
 
@@ -24,16 +27,13 @@ documents before doing any cryptography.
 
 - `playlist.Playlist.Satellites` and `playlists.Overlay.Satellites` (`[]playlists.Satellite`,
   each with `Playlist string`, `Kind string`, `Title string`, `Note string`) — the playlists
-  extension's satellites (§3.8, draft): smaller playlists published around this one (a burn
+  extension's satellites (§3.8): smaller playlists published around this one (a burn
   record, a memento run, a catalog or launch-party edition) that `satellites[]` names on the
   parent so a consumer renders them as labeled sections of its page instead of peer shows.
-  Playlist-only; does not touch items, channels, or `channel.playlists[]` membership. The
-  vendored `extensions/playlists/schema.json` accepts `satellites` ahead of
-  `internal/schema/dp1-commit.txt`'s pin — see that PR's `Depends on` section —
-  because the upstream PR adding it ([display-protocol/dp1#63](https://github.com/display-protocol/dp1/pull/63))
-  is still a draft. `scripts/check-schema-sync.sh` therefore reports
-  `internal/schema/extensions/playlists/schema.json` as differing from the pinned commit until
-  dp1#63 merges and the pin moves.
+  Playlist-only; does not touch items, channels, or `channel.playlists[]` membership.
+  [display-protocol/dp1#63](https://github.com/display-protocol/dp1/pull/63) has merged upstream
+  and `internal/schema/dp1-commit.txt` is pinned past it, so the vendored
+  `extensions/playlists/schema.json` and the pin agree.
 - `sign.VerifyMultiSignaturesJSONDetailed(raw) ([]sign.SignatureResult, error)` — verifies every
   entry in a document's `signatures` array and returns each entry's own outcome in array order:
   `SignatureResult{Index int, Signature playlist.Signature, Err error}`, with `OK()` for
@@ -46,6 +46,24 @@ documents before doing any cryptography.
   byte-identical to before (no `dp1:` prefix) because consumers match it as a substring. Also
   re-exported as `dp1.ErrPayloadHashMismatch`, so a consumer importing only the root package can
   classify it like the other sentinels.
+
+### Fixed
+
+- `satellites[]` broke two decoding invariants the rest of this SDK already holds, caught by
+  feralfile-bot before release. Core-only parsing (`ParseAndValidatePlaylist`) now tolerates an
+  unvalidated `satellites` member of any shape instead of failing the decode, the same tolerance
+  `inlineManifest` and the content-rating members already get — only the
+  `*WithPlaylistsExtension` path validates its contents. And every `Satellite` member
+  (`playlist`/`kind`/`title`/`note`) is now read by its exact JSON key: the extension schema
+  permits properties it does not describe, so a document carrying both `"playlist"` and an
+  unrecognized case variant like `"Playlist"` validates, and `encoding/json`'s case-insensitive
+  field matching would otherwise let the second silently overwrite or drop the first. `Satellite`
+  gets its own `UnmarshalJSON`, decoded from `map[string]json.RawMessage` rather than a typed
+  struct, so no wrongly-cased, wrongly-typed property can fail the decode of a document the schema
+  accepts. `Playlist` itself still has no `UnmarshalJSON` for this — the exact-key extraction of
+  `satellites` lives in `parse.go` instead — because one would be promoted into structs that
+  embed `Playlist` (ffos-user does) and take over their decoding, the same reasoning v0.7.2's
+  `visibility` known limit gives for ruling out a `Playlist.UnmarshalJSON` there too.
 
 ### Changed
 
