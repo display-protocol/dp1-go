@@ -58,7 +58,7 @@ func intPtr(i int) *int { return &i }
 // field added to Entity must reach manifests with no second edit.
 func TestEntityModelIsShared(t *testing.T) {
 	e := identity.Entity{Name: "n", Links: []identity.Link{{Type: LinkTypeWebsite, URL: "https://x"}}}
-	var a Artist = e // assignable both ways only because Artist is an alias, not a mirror
+	a := Artist(e) // identity conversion only because Artist is an alias
 	a.Biographies = []Biography{{Text: "t"}}
 	a.Avatar = &Thumbnail{URI: "u"}
 	a.Links[0].Authors = []Artist{{Name: "x"}}
