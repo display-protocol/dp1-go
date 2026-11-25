@@ -278,6 +278,37 @@ type InteractionPrefs struct {
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 
+// UnmarshalJSON matches "keyboard" and "mouse" by exact name. encoding/json would match
+// them case-insensitively, so a schema-valid unknown member such as "Keyboard": [] would be
+// read as an explicit empty list and revoke an inherited key list in the merge. Absent vs
+// present is preserved: a member absent from the update leaves the receiver's field as it
+// was (the same receiver-merge behavior as the rest of PlaylistItem); a present "keyboard"
+// replaces the list, with [] decoding to a non-nil empty slice (revocation, #6) and null to nil.
+func (ip *InteractionPrefs) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil { // JSON null: leave the value untouched, like the default decoder.
+		return nil
+	}
+	if v, ok := raw["keyboard"]; ok {
+		var kb []string
+		if err := json.Unmarshal(v, &kb); err != nil {
+			return err
+		}
+		ip.Keyboard = kb
+	}
+	if v, ok := raw["mouse"]; ok {
+		// Decode into the existing pointer so MousePrefs.UnmarshalJSON can merge flag by flag;
+		// JSON null clears it, as the default decoder would.
+		if err := json.Unmarshal(v, &ip.Mouse); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // MarshalJSON keeps an empty-but-non-nil Keyboard on the wire as "keyboard": []. omitempty
 // would drop it, and that is how a layer revokes an inherited key list (#6), so a document
 // built or re-encoded through this SDK would lose the revocation before it is signed. Kept
@@ -321,7 +352,9 @@ func (m *MousePrefs) UnmarshalJSON(data []byte) error {
 	if raw == nil { // JSON null: leave the value untouched, like the default decoder.
 		return nil
 	}
-	var out MousePrefs
+	// Decode into a copy and assign only on success, so a malformed member leaves the
+	// receiver unchanged. Members absent from the update keep the receiver's value.
+	out := *m
 	for name, dst := range map[string]**bool{
 		"click": &out.Click, "scroll": &out.Scroll, "drag": &out.Drag, "hover": &out.Hover,
 	} {

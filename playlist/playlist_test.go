@@ -844,3 +844,50 @@ func TestMousePrefs_exactKeysOnly(t *testing.T) {
 		t.Fatal("wrong type must error")
 	}
 }
+
+// F3: an unknown-case "Keyboard" member must not be read as the explicit empty list, and
+// "Mouse" must be ignored too; absent vs explicit [] stays distinct.
+func TestInteractionPrefs_exactKeysOnly(t *testing.T) {
+	t.Parallel()
+	var ip InteractionPrefs
+	if err := json.Unmarshal([]byte(`{"Keyboard":[],"Mouse":{"click":true}}`), &ip); err != nil {
+		t.Fatal(err)
+	}
+	if ip.Keyboard != nil || ip.Mouse != nil {
+		t.Fatalf("wrong-case members must be ignored: %+v", ip)
+	}
+	if err := json.Unmarshal([]byte(`{"keyboard":[]}`), &ip); err != nil {
+		t.Fatal(err)
+	}
+	if ip.Keyboard == nil || len(ip.Keyboard) != 0 {
+		t.Fatalf("explicit empty keyboard lost: %#v", ip.Keyboard)
+	}
+	if err := json.Unmarshal([]byte(`{"keyboard":"x"}`), &ip); err == nil {
+		t.Fatal("wrong type must error")
+	}
+}
+
+// F4: decoding a partial update into an existing receiver keeps the fields it does not name.
+func TestInteractionPrefs_partialUpdateKeepsReceiver(t *testing.T) {
+	t.Parallel()
+	var it PlaylistItem
+	if err := json.Unmarshal([]byte(`{"display":{"interaction":{"keyboard":["KeyA"],"mouse":{"click":false}}}}`), &it); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"display":{"interaction":{"mouse":{"scroll":true}}}}`), &it); err != nil {
+		t.Fatal(err)
+	}
+	ip := it.Display.Interaction
+	if ip == nil || ip.Mouse == nil {
+		t.Fatalf("interaction lost: %+v", ip)
+	}
+	if ip.Mouse.Click == nil || *ip.Mouse.Click {
+		t.Fatalf("explicit click:false cleared: %v", ip.Mouse.Click)
+	}
+	if ip.Mouse.Scroll == nil || !*ip.Mouse.Scroll {
+		t.Fatalf("scroll not applied: %v", ip.Mouse.Scroll)
+	}
+	if len(ip.Keyboard) != 1 {
+		t.Fatalf("keyboard lost: %v", ip.Keyboard)
+	}
+}
