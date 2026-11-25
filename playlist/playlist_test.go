@@ -805,3 +805,20 @@ func TestMousePrefs_explicitFalseRoundTrips(t *testing.T) {
 		t.Fatalf("round trip lost presence: %+v", m)
 	}
 }
+
+func TestInteractionPrefs_emptyKeyboardRoundTrips(t *testing.T) {
+	b, err := json.Marshal(InteractionPrefs{Keyboard: []string{}})
+	if err != nil || string(b) != `{"keyboard":[]}` {
+		t.Fatalf("got %s, %v", b, err)
+	}
+	var back InteractionPrefs
+	if err := json.Unmarshal(b, &back); err != nil || back.Keyboard == nil || len(back.Keyboard) != 0 {
+		t.Fatalf("revocation lost on decode: %#v %v", back.Keyboard, err)
+	}
+	if b, _ := json.Marshal(InteractionPrefs{}); string(b) != `{}` {
+		t.Fatalf("unset keyboard must stay omitted: %s", b)
+	}
+	if b, _ := json.Marshal(InteractionPrefs{Keyboard: []string{"Space"}}); string(b) != `{"keyboard":["Space"]}` {
+		t.Fatalf("%s", b)
+	}
+}

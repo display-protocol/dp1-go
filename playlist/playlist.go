@@ -278,6 +278,23 @@ type InteractionPrefs struct {
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 
+// MarshalJSON keeps an empty-but-non-nil Keyboard on the wire as "keyboard": []. omitempty
+// would drop it, and that is how a layer revokes an inherited key list (#6), so a document
+// built or re-encoded through this SDK would lose the revocation before it is signed. Kept
+// as a method, not a *[]string field, so the field type stays source-compatible; nil still
+// means "not stated" and is omitted. Decoding already preserves the distinction.
+func (ip InteractionPrefs) MarshalJSON() ([]byte, error) {
+	type plain struct {
+		Keyboard *[]string   `json:"keyboard,omitempty"`
+		Mouse    *MousePrefs `json:"mouse,omitempty"`
+	}
+	out := plain{Mouse: ip.Mouse}
+	if ip.Keyboard != nil {
+		out.Keyboard = &ip.Keyboard
+	}
+	return json.Marshal(out)
+}
+
 // MousePrefs toggles pointer interactions.
 //
 // Each field is a pointer so an explicit false stays distinct from an absent key: the merge
