@@ -24,7 +24,8 @@ compatibility; every break is listed here with the migration.
 ### Added
 
 - `merge.DurationForItem` and `merge.LicenseForItem`: the `defaults.duration` /
-  `defaults.license` inheritance of §3.1 (item, then `override.duration`, then defaults).
+  `defaults.license` inheritance of §3.1. Duration resolves item, then `override.duration`, then
+  defaults; license resolves item, then defaults.
 
 ## v0.7.3 — 2026-11-09
 
