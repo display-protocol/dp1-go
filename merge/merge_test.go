@@ -778,3 +778,74 @@ func TestDisplayForItem_parentUnknownCaseKeysIgnored(t *testing.T) {
 		})
 	}
 }
+
+// F6: the remaining ancestors — item "Override"/"InlineManifest" and manifest
+// "Controls"/"Display"/"Interaction" — are matched by exact name too.
+func TestDisplayForItem_remainingAncestorsUnknownCaseIgnored(t *testing.T) {
+	t.Parallel()
+	tru := true
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"KeyA"},
+		Mouse:    &playlist.MousePrefs{Click: &tru},
+	}}}
+	const ia = `{"keyboard":[],"mouse":{"click":false}}`
+	items := map[string]string{
+		"item Override":       `{"source":"https://x","Override":{"display":{"interaction":` + ia + `}}}`,
+		"item InlineManifest": `{"source":"https://x","InlineManifest":{"controls":{"display":{"interaction":` + ia + `}}}}`,
+		"inline Controls":     `{"source":"https://x","inlineManifest":{"Controls":{"display":{"interaction":` + ia + `}}}}`,
+		"inline Display":      `{"source":"https://x","inlineManifest":{"controls":{"Display":{"interaction":` + ia + `}}}}`,
+		"inline Interaction":  `{"source":"https://x","inlineManifest":{"controls":{"display":{"Interaction":` + ia + `}}}}`,
+	}
+	check := func(t *testing.T, out *playlist.DisplayPrefs) {
+		t.Helper()
+		in := out.Interaction
+		if in == nil || len(in.Keyboard) != 1 || in.Mouse == nil || in.Mouse.Click == nil || !*in.Mouse.Click {
+			t.Fatalf("unknown-case ancestor revoked inherited controls: %+v", in)
+		}
+	}
+	for name, doc := range items {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var item playlist.PlaylistItem
+			if err := json.Unmarshal([]byte(doc), &item); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, nil, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, out)
+		})
+	}
+	refs := map[string]string{
+		"ref Controls":    `{"Controls":{"display":{"interaction":` + ia + `}}}`,
+		"ref Display":     `{"controls":{"Display":{"interaction":` + ia + `}}}`,
+		"ref Interaction": `{"controls":{"display":{"Interaction":` + ia + `}}}`,
+	}
+	for name, doc := range refs {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var m refmanifest.Manifest
+			if err := json.Unmarshal([]byte(doc), &m); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, &m, playlist.PlaylistItem{Source: "https://x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, out)
+		})
+	}
+	// Exact names still apply.
+	var m refmanifest.Manifest
+	if err := json.Unmarshal([]byte(`{"controls":{"display":{"interaction":`+ia+`}}}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	out, err := DisplayForItem(def, &m, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := out.Interaction; in == nil || len(in.Keyboard) != 0 || *in.Mouse.Click {
+		t.Fatalf("exact-name manifest revocation lost: %+v", in)
+	}
+}

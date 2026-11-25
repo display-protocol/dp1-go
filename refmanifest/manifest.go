@@ -18,6 +18,33 @@ type Manifest struct {
 	I18n       map[string]LocalizedMetadata `json:"i18n,omitempty"`
 }
 
+// UnmarshalJSON matches the "controls" member by exact name. encoding/json would read a
+// schema-valid unknown "Controls" member as the recognized one, and merge would then apply its
+// empty keyboard list as a revocation of inherited controls. Receiver values are kept for an
+// absent member and null clears it, as the default decoder does.
+func (m *Manifest) UnmarshalJSON(data []byte) error {
+	type plain Manifest // strips this method to avoid recursion
+	shadow := struct {
+		plain
+		Controls json.RawMessage `json:"controls"` // sink; exact lookup follows
+	}{plain: plain(*m)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	out := Manifest(shadow.plain)
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+	if raw, ok := members["controls"]; ok {
+		if err := json.Unmarshal(raw, &out.Controls); err != nil {
+			return err
+		}
+	}
+	*m = out
+	return nil
+}
+
 // Metadata carries human-facing labels and media.
 type Metadata struct {
 	Title       string               `json:"title,omitempty"`
@@ -88,6 +115,53 @@ type Controls struct {
 	// "microphone" (refVersion 1.2.0). A player that cannot grant one should not start the
 	// work silently; it should show why the work cannot play.
 	Permissions []string `json:"permissions,omitempty"`
+}
+
+// UnmarshalJSON matches the "display" member by exact name; see [Manifest.UnmarshalJSON].
+func (c *Controls) UnmarshalJSON(data []byte) error {
+	type plain Controls
+	shadow := struct {
+		plain
+		Display json.RawMessage `json:"display"` // sink; exact lookup follows
+	}{plain: plain(*c)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	out := Controls(shadow.plain)
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+	if raw, ok := members["display"]; ok {
+		if err := json.Unmarshal(raw, &out.Display); err != nil {
+			return err
+		}
+	}
+	*c = out
+	return nil
+}
+
+// UnmarshalJSON matches the "interaction" member by exact name; see [Manifest.UnmarshalJSON].
+// The block stays raw (merge decodes it), so a present member replaces the seeded bytes.
+func (d *DisplayControls) UnmarshalJSON(data []byte) error {
+	type plain DisplayControls
+	shadow := struct {
+		plain
+		Interaction json.RawMessage `json:"interaction"` // sink; exact lookup follows
+	}{plain: plain(*d)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	out := DisplayControls(shadow.plain)
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+	if raw, ok := members["interaction"]; ok {
+		out.Interaction = append(json.RawMessage(nil), raw...)
+	}
+	*d = out
+	return nil
 }
 
 // DisplayControls mirrors playlist display prefs at manifest level.

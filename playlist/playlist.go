@@ -188,6 +188,9 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		ContentReasons json.RawMessage `json:"contentReasons"`
 		// Sink for a case-variant "Display"; the exact "display" member is decoded below.
 		Display json.RawMessage `json:"display"`
+		// Sinks for case-variant "Override" / "InlineManifest"; exact members are taken below.
+		Override       json.RawMessage `json:"override"`
+		InlineManifest json.RawMessage `json:"inlineManifest"`
 	}{item: item(*it)}
 	if err := json.Unmarshal(data, &shadow); err != nil {
 		return err
@@ -223,6 +226,17 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(raw, &it.Display); err != nil {
 			return err
 		}
+	}
+
+	// "override" and "inlineManifest" stay raw but are taken by exact key for the same reason:
+	// merge reads their display.interaction blocks, so a case-variant "Override" or
+	// "InlineManifest" member must not stand in for the recognized one. A present member
+	// replaces the seeded bytes (including null, as encoding/json does for RawMessage).
+	if raw, ok := members["override"]; ok {
+		it.Override = append(json.RawMessage(nil), raw...)
+	}
+	if raw, ok := members["inlineManifest"]; ok {
+		it.InlineManifest = append(json.RawMessage(nil), raw...)
 	}
 
 	if raw, ok := members["contentRating"]; ok {
