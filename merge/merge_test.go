@@ -377,7 +377,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Autoplay: &fal,
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"KeyA"},
-				Mouse:    &playlist.MousePrefs{Click: true},
+				Mouse:    &playlist.MousePrefs{Click: &tru},
 			},
 			UserOverrides: map[string]bool{"scaling": true},
 		},
@@ -407,7 +407,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Scaling: "auto",
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"Enter"},
-				Mouse:    &playlist.MousePrefs{Hover: true},
+				Mouse:    &playlist.MousePrefs{Hover: &tru},
 			},
 			UserOverrides: map[string]bool{"margin": true},
 		},
@@ -604,5 +604,103 @@ func TestDisplayForItem_badInlineManifest(t *testing.T) {
 	}
 	if out == nil || out.Scaling != "fill" {
 		t.Fatalf("expected the ref manifest to be applied, got %+v", out)
+	}
+}
+
+// --- revocation and per-key interaction merge (#6) ---
+
+func ptr[T any](v T) *T { return &v }
+
+func TestDisplayForItem_itemRevokesInheritedMouse(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"Space"},
+		Mouse:    &playlist.MousePrefs{Click: ptr(true), Hover: ptr(true)},
+	}}}
+	item := playlist.PlaylistItem{Source: "https://x", Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{},
+		Mouse:    &playlist.MousePrefs{Click: ptr(false)},
+	}}}
+	out, err := DisplayForItem(def, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := out.Interaction.Mouse
+	if m.Click == nil || *m.Click {
+		t.Fatalf("click must be revoked: %v", m.Click)
+	}
+	if m.Hover == nil || !*m.Hover {
+		t.Fatalf("hover is not named by the item and must be kept: %v", m.Hover)
+	}
+	if out.Interaction.Keyboard == nil || len(out.Interaction.Keyboard) != 0 {
+		t.Fatalf("explicit empty keyboard must revoke: %#v", out.Interaction.Keyboard)
+	}
+	// The defaults object must not be mutated by the merge.
+	if !*def.Display.Interaction.Mouse.Click || len(def.Display.Interaction.Keyboard) != 1 {
+		t.Fatal("defaults mutated")
+	}
+}
+
+func TestDisplayForItem_manifestMouseMergesPerKey(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Mouse: &playlist.MousePrefs{Click: ptr(true), Scroll: ptr(true)},
+	}}}
+	ref := &refmanifest.Manifest{Controls: &refmanifest.Controls{Display: &refmanifest.DisplayControls{
+		Interaction: json.RawMessage(`{"mouse":{"scroll":false,"drag":true}}`),
+	}}}
+	out, err := DisplayForItem(def, ref, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := out.Interaction.Mouse
+	if !*m.Click || *m.Scroll || !*m.Drag || m.Hover != nil {
+		t.Fatalf("click=%v scroll=%v drag=%v hover=%v", m.Click, m.Scroll, m.Drag, m.Hover)
+	}
+}
+
+// --- duration and license inheritance (§3.1) ---
+
+func TestDurationForItem(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Duration: ptr(300.0)}
+	cases := []struct {
+		name string
+		def  *playlist.Defaults
+		item playlist.PlaylistItem
+		want *float64
+	}{
+		{"defaults", def, playlist.PlaylistItem{}, ptr(300.0)},
+		{"override beats defaults", def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":180}`)}, ptr(180.0)},
+		{"item beats override", def, playlist.PlaylistItem{Duration: ptr(30.0), Override: json.RawMessage(`{"duration":180}`)}, ptr(30.0)},
+		{"explicit zero is kept", def, playlist.PlaylistItem{Duration: ptr(0.0)}, ptr(0.0)},
+		{"nothing set", nil, playlist.PlaylistItem{}, nil},
+		{"override without duration", def, playlist.PlaylistItem{Override: json.RawMessage(`{"display":{}}`)}, ptr(300.0)},
+	}
+	for _, tc := range cases {
+		got, err := DurationForItem(tc.def, tc.item)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+	if _, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`nope`)}); err == nil {
+		t.Fatal("malformed override must error")
+	}
+}
+
+func TestLicenseForItem(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{License: "open"}
+	if got := LicenseForItem(def, playlist.PlaylistItem{}); got != "open" {
+		t.Fatal(got)
+	}
+	if got := LicenseForItem(def, playlist.PlaylistItem{License: "token"}); got != "token" {
+		t.Fatal(got)
+	}
+	if got := LicenseForItem(nil, playlist.PlaylistItem{}); got != "" {
+		t.Fatal(got)
 	}
 }

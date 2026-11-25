@@ -243,3 +243,15 @@ func TestVerifyMultiWrongHash(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// DP-1 §7.1.1 names ecdsa-secp256k1 and ecdsa-p256 but defines neither the signature
+// encoding nor the kid form, so no verifier is registered: a document using them must
+// fail closed rather than be accepted or guessed at. Registering them here before dp1-js
+// and the spec agree on an encoding would make the two SDKs disagree on the same bytes.
+func TestGetVerifier_specAlgsWithoutEncodingFailClosed(t *testing.T) {
+	for _, alg := range []string{"ecdsa-secp256k1", "ecdsa-p256"} {
+		if _, err := GetVerifier(alg); !errors.Is(err, ErrUnsupportedAlg) {
+			t.Fatalf("%s: got %v, want ErrUnsupportedAlg", alg, err)
+		}
+	}
+}

@@ -16,6 +16,14 @@ import (
 )
 
 // Playlist is a DP-1 playlist (v1.0.x legacy signature and/or v1.1+ multi-signature).
+//
+// The typed structs are a decode view, not a lossless copy: members a document carries that
+// this SDK version has no field for (a later minor's additions) are dropped by json.Unmarshal,
+// so json.Marshal of a decoded Playlist can differ from the bytes received. Signatures are
+// computed over the received bytes (DP-1 §7.1), so verify with the sign.*JSON functions on
+// the raw document, never on a re-marshaled struct, and keep the raw bytes when a document
+// must be forwarded unchanged. A catch-all member map was rejected: it would turn every
+// struct into a pair of views that can disagree.
 type Playlist struct {
 	DPVersion  string         `json:"dpVersion"`
 	ID         string         `json:"id,omitempty"`
@@ -272,14 +280,15 @@ type InteractionPrefs struct {
 
 // MousePrefs toggles pointer interactions.
 //
-// These are plain bools, so an explicit false is indistinguishable from an absent key and the
-// merge order cannot express a revocation: see #6, which changes them to pointers. Left as they
-// are here to keep this change to the two spec updates it implements.
+// Each field is a pointer so an explicit false stays distinct from an absent key: the merge
+// order (defaults → manifests → override → item) lets a higher layer revoke an interaction a
+// lower one enabled, which needs the "present and false" state (#6; DP-1 §4 interaction.mouse).
+// nil means the layer says nothing about that pointer interaction.
 type MousePrefs struct {
-	Click  bool `json:"click,omitempty"`
-	Scroll bool `json:"scroll,omitempty"`
-	Drag   bool `json:"drag,omitempty"`
-	Hover  bool `json:"hover,omitempty"`
+	Click  *bool `json:"click,omitempty"`
+	Scroll *bool `json:"scroll,omitempty"`
+	Drag   *bool `json:"drag,omitempty"`
+	Hover  *bool `json:"hover,omitempty"`
 }
 
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).

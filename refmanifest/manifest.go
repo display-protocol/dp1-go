@@ -1,7 +1,11 @@
 // Package refmanifest defines the optional ref manifest envelope (metadata + controls).
 package refmanifest
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/display-protocol/dp1-go/extension/identity"
+)
 
 // Manifest is the ref manifest root (DP-1 ref-manifest schema).
 type Manifest struct {
@@ -37,131 +41,44 @@ type Medium struct {
 	Details []string `json:"details,omitempty"`
 }
 
-// Artist identifies a creator and, from refVersion 1.1.0, carries a
-// profile snapshot taken when the manifest was authored (spec §4.1).
+// Artist, Biography, Link and Thumbnail are the single Entity model of the DP-1 spec
+// (ref-manifest $defs/Entity and friends), shared with the channels and playlists
+// extensions, which name curators, publishers and note authors with the same shape.
 //
-// Identity: only Addresses may be used to recognize the same artist across
-// producers. ID is producer-scoped (two producers label one artist with
-// different ids), and Name is display text. Addresses is a signed claim of
-// the producer, not a fact — a wallet can be shared by a collective or a
-// collaborative mint — so consumers must not merge two artist records merely
-// because their address lists intersect.
+// They are aliases of the extension/identity types rather than copies: two field-for-field
+// mirrors had to be kept in step by hand, and one that lagged would validate a document and
+// then silently drop what the schema accepted. An alias makes that drift impossible, and
+// keeps existing refmanifest.Artist{...} code compiling. Add new Entity fields in package
+// identity only.
 //
-// Profile fields (Avatar, Biographies, Links) are the offline fallback, not
-// the source of truth; a consumer may overlay fresher registry data keyed by
-// Addresses.
-//
-// This is the decode target for the ref-manifest schema's Artist $def, which the
-// Entity consolidation turned into a $ref to $defs/Entity. Every field Entity gains
-// must therefore be mirrored here, or a document carrying it validates and then has
-// it silently dropped by json.Unmarshal — the schema says yes, the struct forgets.
-// The struct deliberately is not identity.Entity itself: aliasing a long-public type
-// is a separate, wider API change, so the two are kept field-for-field instead.
-type Artist struct {
-	Name string `json:"name"`
-	// Key is a verifiable identity in DID format. Informational only: signatures carry
-	// their own kid, and this field is never used to verify them.
-	Key string `json:"key,omitempty"`
-	// ID is an opaque, producer-scoped label. Not an identity.
-	ID string `json:"id,omitempty"`
-	// URL is the refVersion 1.0.0 single profile URL.
-	//
-	// Deprecated: superseded by Links (write an entry of type "website").
-	// Still valid on the wire; a producer that emits both must keep URL equal
-	// to that entry. Consumers read Links first and fall back to URL only
-	// when Links is absent or empty.
-	URL string `json:"url,omitempty"`
-	// Role names the entity's function where its position does not already say it.
-	// Present because Artist is now a $ref to Entity: an entry in metadata.artists[]
-	// may spell out a role the position would otherwise imply. Omitted, the position
-	// decides. One of the schema's role enumeration values.
-	Role string `json:"role,omitempty"`
-	// Location is where the person or organization is based, free text (a city and
-	// country, typically) — not a structured address.
-	Location string `json:"location,omitempty"`
-	// Addresses holds raw wallet addresses (EVM 0x…, Tezos tz1…tz4). Contract
-	// addresses (Tezos KT1…, EVM collection contracts) name a collection, not
-	// a person, and must not be listed — they belong in provenance.contract.
-	Addresses []string `json:"addresses,omitempty"`
-	// Avatar is a portrait or profile image; same shape as a thumbnail.
-	Avatar *Thumbnail `json:"avatar,omitempty"`
-	// Biographies are ordered by the producer's preference; when only one
-	// fits, show the first.
-	Biographies []Biography `json:"biographies,omitempty"`
-	// Links are typed profile links with full URLs, never bare handles.
-	Links []Link `json:"links,omitempty"`
-}
-
-// Biography is one biographical text with optional attribution.
-type Biography struct {
-	// Text is plain text, no markup.
-	Text string `json:"text"`
-	// Source names the publication or platform the text comes from.
-	Source string `json:"source,omitempty"`
-	// SourceURL is the URL of that source.
-	SourceURL string `json:"sourceUrl,omitempty"`
-}
-
-// Link is an external link: an entity's profile link (website, publication) or, via
-// the same $def, editorial content attached to a playlist (article, event, news).
-//
-// Title/Date/Thumbnail/Authors are the dp1#55 additions on top of the original
-// Type+URL pair. They are mirrored here for the same reason Artist mirrors Entity:
-// metadata.artists[].links[] resolves to this one Link $def, so a field missing from
-// the struct is a field the schema accepts and the decode throws away.
-type Link struct {
-	// Type is one of the LinkType* constants; the schema rejects anything else.
-	Type string `json:"type"`
-	// URL is always a full URL, never a bare handle, so players carry no
-	// per-network URL rules.
-	URL string `json:"url"`
-	// Title is a human-readable label for the destination, such as a publication or
-	// article title.
-	Title string `json:"title,omitempty"`
-	// Date is an RFC3339 timestamp the linked content refers to (an article's publish
-	// date, an event's start), not when this Link entry itself was written.
-	Date string `json:"date,omitempty"`
-	// Thumbnail is a representative image for the destination, the same shape used
-	// everywhere else in DP-1.
-	Thumbnail *Thumbnail `json:"thumbnail,omitempty"`
-	// Authors credits who wrote or presented the linked content, the way Artists
-	// credits a work — the schema types them as full entities, hence Artist here.
-	Authors []Artist `json:"authors,omitempty"`
-}
-
-// Link types accepted by the schema's links[].type enumeration. A destination
-// the enumeration does not name is written as LinkTypeOther.
-const (
-	LinkTypeWebsite   = "website"
-	LinkTypeTwitter   = "twitter"
-	LinkTypeInstagram = "instagram"
-	// Profile is the producer's own page about the entity; Publication is writing by or
-	// about it. Article, Event and News are editorial content about a playlist. All five
-	// arrived with dp1#55 and are listed so this block stays the schema's full enumeration.
-	LinkTypeProfile     = "profile"
-	LinkTypePublication = "publication"
-	LinkTypeArticle     = "article"
-	LinkTypeEvent       = "event"
-	LinkTypeNews        = "news"
-	LinkTypeOther       = "other"
+// Identity: only Addresses may be used to recognize the same artist across producers. ID is
+// producer-scoped and Name is display text; Addresses is a signed claim of the producer, so
+// consumers must not merge two records merely because their address lists intersect.
+type (
+	// Artist is identity.Entity: a creator credited in metadata.artists[], and from
+	// refVersion 1.1.0 a profile snapshot taken when the manifest was authored (spec §4.1).
+	Artist = identity.Entity
+	// Biography is one biographical text with optional attribution.
+	Biography = identity.Biography
+	// Link is an external link (profile or editorial); see identity.Link.
+	Link = identity.Link
+	// Thumbnail references a preview image; only URI is required (core changelog 2026-08-12).
+	// The schema accepts integer spellings Go does not ("w": 1e2); that gap is tracked in #7.
+	Thumbnail = identity.Thumbnail
 )
 
-// Thumbnail references a preview image.
-//
-// Only URI is required. W and H are pointers because the ref-manifest schema relaxed
-// `required` from ["uri","w","h"] to ["uri"] (core changelog 2026-08-12): producers that
-// hold only a bare thumbnail URL omit the dimensions rather than guess, and consumers MUST
-// treat them as possibly absent. A nil pointer means "unknown", which a plain int could not
-// distinguish from a value the emitter actually wrote.
-//
-// Note the schema accepts integer spellings Go does not: "w": 1e2 and 100.0 validate but fail
-// to decode into int. That gap predates the relaxation and is tracked in #7.
-type Thumbnail struct {
-	URI    string `json:"uri"`
-	W      *int   `json:"w,omitempty"`
-	H      *int   `json:"h,omitempty"`
-	SHA256 string `json:"sha256,omitempty"`
-}
+// Link types accepted by the schema's links[].type enumeration; see identity.LinkType*.
+const (
+	LinkTypeWebsite     = identity.LinkTypeWebsite
+	LinkTypeTwitter     = identity.LinkTypeTwitter
+	LinkTypeInstagram   = identity.LinkTypeInstagram
+	LinkTypeProfile     = identity.LinkTypeProfile
+	LinkTypePublication = identity.LinkTypePublication
+	LinkTypeArticle     = identity.LinkTypeArticle
+	LinkTypeEvent       = identity.LinkTypeEvent
+	LinkTypeNews        = identity.LinkTypeNews
+	LinkTypeOther       = identity.LinkTypeOther
+)
 
 // Controls groups display and safety preferences and device permissions from the manifest.
 type Controls struct {
