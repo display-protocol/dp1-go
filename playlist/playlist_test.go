@@ -784,3 +784,110 @@ func TestPlaylistItemUnmarshalMergesIntoReceiver(t *testing.T) {
 		}
 	})
 }
+
+// An explicit false must survive the wire: it is how a document revokes an interaction a
+// lower layer enabled (#6). omitempty on a plain bool would drop it.
+func TestMousePrefs_explicitFalseRoundTrips(t *testing.T) {
+	f, tr := false, true
+	b, err := json.Marshal(DisplayPrefs{Interaction: &InteractionPrefs{Mouse: &MousePrefs{Click: &f, Hover: &tr}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"interaction":{"mouse":{"click":false,"hover":true}}}`; string(b) != want {
+		t.Fatalf("got %s want %s", b, want)
+	}
+	var back DisplayPrefs
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	m := back.Interaction.Mouse
+	if m.Click == nil || *m.Click || m.Scroll != nil || m.Hover == nil || !*m.Hover {
+		t.Fatalf("round trip lost presence: %+v", m)
+	}
+}
+
+func TestInteractionPrefs_emptyKeyboardRoundTrips(t *testing.T) {
+	b, err := json.Marshal(InteractionPrefs{Keyboard: []string{}})
+	if err != nil || string(b) != `{"keyboard":[]}` {
+		t.Fatalf("got %s, %v", b, err)
+	}
+	var back InteractionPrefs
+	if err := json.Unmarshal(b, &back); err != nil || back.Keyboard == nil || len(back.Keyboard) != 0 {
+		t.Fatalf("revocation lost on decode: %#v %v", back.Keyboard, err)
+	}
+	if b, _ := json.Marshal(InteractionPrefs{}); string(b) != `{}` {
+		t.Fatalf("unset keyboard must stay omitted: %s", b)
+	}
+	if b, _ := json.Marshal(InteractionPrefs{Keyboard: []string{"Space"}}); string(b) != `{"keyboard":["Space"]}` {
+		t.Fatalf("%s", b)
+	}
+}
+
+// An unknown member differing only by case must not clear or replace the recognized flag
+// (encoding/json would otherwise match "Click" to the click field case-insensitively).
+func TestMousePrefs_exactKeysOnly(t *testing.T) {
+	t.Parallel()
+	var m MousePrefs
+	if err := json.Unmarshal([]byte(`{"click":true,"Click":null,"HOVER":true,"drag":false}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Click == nil || !*m.Click {
+		t.Fatalf("click lost: %v", m.Click)
+	}
+	if m.Hover != nil {
+		t.Fatalf("HOVER must be ignored, got %v", *m.Hover)
+	}
+	if m.Drag == nil || *m.Drag {
+		t.Fatalf("explicit false lost: %v", m.Drag)
+	}
+	if err := json.Unmarshal([]byte(`{"click":"x"}`), &m); err == nil {
+		t.Fatal("wrong type must error")
+	}
+}
+
+// F3: an unknown-case "Keyboard" member must not be read as the explicit empty list, and
+// "Mouse" must be ignored too; absent vs explicit [] stays distinct.
+func TestInteractionPrefs_exactKeysOnly(t *testing.T) {
+	t.Parallel()
+	var ip InteractionPrefs
+	if err := json.Unmarshal([]byte(`{"Keyboard":[],"Mouse":{"click":true}}`), &ip); err != nil {
+		t.Fatal(err)
+	}
+	if ip.Keyboard != nil || ip.Mouse != nil {
+		t.Fatalf("wrong-case members must be ignored: %+v", ip)
+	}
+	if err := json.Unmarshal([]byte(`{"keyboard":[]}`), &ip); err != nil {
+		t.Fatal(err)
+	}
+	if ip.Keyboard == nil || len(ip.Keyboard) != 0 {
+		t.Fatalf("explicit empty keyboard lost: %#v", ip.Keyboard)
+	}
+	if err := json.Unmarshal([]byte(`{"keyboard":"x"}`), &ip); err == nil {
+		t.Fatal("wrong type must error")
+	}
+}
+
+// F4: decoding a partial update into an existing receiver keeps the fields it does not name.
+func TestInteractionPrefs_partialUpdateKeepsReceiver(t *testing.T) {
+	t.Parallel()
+	var it PlaylistItem
+	if err := json.Unmarshal([]byte(`{"display":{"interaction":{"keyboard":["KeyA"],"mouse":{"click":false}}}}`), &it); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"display":{"interaction":{"mouse":{"scroll":true}}}}`), &it); err != nil {
+		t.Fatal(err)
+	}
+	ip := it.Display.Interaction
+	if ip == nil || ip.Mouse == nil {
+		t.Fatalf("interaction lost: %+v", ip)
+	}
+	if ip.Mouse.Click == nil || *ip.Mouse.Click {
+		t.Fatalf("explicit click:false cleared: %v", ip.Mouse.Click)
+	}
+	if ip.Mouse.Scroll == nil || !*ip.Mouse.Scroll {
+		t.Fatalf("scroll not applied: %v", ip.Mouse.Scroll)
+	}
+	if len(ip.Keyboard) != 1 {
+		t.Fatalf("keyboard lost: %v", ip.Keyboard)
+	}
+}

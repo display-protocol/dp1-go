@@ -16,6 +16,14 @@ import (
 )
 
 // Playlist is a DP-1 playlist (v1.0.x legacy signature and/or v1.1+ multi-signature).
+//
+// The typed structs are a decode view, not a lossless copy: members a document carries that
+// this SDK version has no field for (a later minor's additions) are dropped by json.Unmarshal,
+// so json.Marshal of a decoded Playlist can differ from the bytes received. Signatures are
+// computed over the received bytes (DP-1 §7.1), so verify with the sign.*JSON functions on
+// the raw document, never on a re-marshaled struct, and keep the raw bytes when a document
+// must be forwarded unchanged. A catch-all member map was rejected: it would turn every
+// struct into a pair of views that can disagree.
 type Playlist struct {
 	DPVersion  string         `json:"dpVersion"`
 	ID         string         `json:"id,omitempty"`
@@ -178,6 +186,11 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		item
 		ContentRating  json.RawMessage `json:"contentRating"`
 		ContentReasons json.RawMessage `json:"contentReasons"`
+		// Sink for a case-variant "Display"; the exact "display" member is decoded below.
+		Display json.RawMessage `json:"display"`
+		// Sinks for case-variant "Override" / "InlineManifest"; exact members are taken below.
+		Override       json.RawMessage `json:"override"`
+		InlineManifest json.RawMessage `json:"inlineManifest"`
 	}{item: item(*it)}
 	if err := json.Unmarshal(data, &shadow); err != nil {
 		return err
@@ -203,6 +216,27 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		// decode above already rejected anything that is not a valid item, so there is nothing
 		// further to take.
 		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+
+	// "display" gets the same exact-key treatment: an unknown "Display" member must not be
+	// materialized as the item's display controls, where its interaction block could revoke
+	// inherited keyboard or mouse controls. Decoding into the existing pointer keeps the
+	// receiver-merge behavior of the default decoder; null clears it.
+	if raw, ok := members["display"]; ok {
+		if err := json.Unmarshal(raw, &it.Display); err != nil {
+			return err
+		}
+	}
+
+	// "override" and "inlineManifest" stay raw but are taken by exact key for the same reason:
+	// merge reads their display.interaction blocks, so a case-variant "Override" or
+	// "InlineManifest" member must not stand in for the recognized one. A present member
+	// replaces the seeded bytes (including null, as encoding/json does for RawMessage).
+	if raw, ok := members["override"]; ok {
+		it.Override = append(json.RawMessage(nil), raw...)
+	}
+	if raw, ok := members["inlineManifest"]; ok {
+		it.InlineManifest = append(json.RawMessage(nil), raw...)
 	}
 
 	if raw, ok := members["contentRating"]; ok {
@@ -264,22 +298,131 @@ type DisplayPrefs struct {
 	UserOverrides  map[string]bool   `json:"userOverrides,omitempty"`
 }
 
+// UnmarshalJSON matches the "interaction" member by exact name, for the same reason
+// InteractionPrefs matches its own members exactly: encoding/json would read a schema-valid
+// unknown "Interaction" member as the recognized one and let it revoke inherited controls.
+// Other fields keep encoding/json's matching; they cannot revoke an interaction. Receiver
+// values are kept for absent members (receiver-merge), and null clears interaction.
+func (d *DisplayPrefs) UnmarshalJSON(data []byte) error {
+	type plain DisplayPrefs // strips this method to avoid recursion
+	shadow := struct {
+		plain
+		// Sink so a case-variant key never reaches the typed field; exact lookup follows.
+		Interaction json.RawMessage `json:"interaction"`
+	}{plain: plain(*d)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	out := DisplayPrefs(shadow.plain)
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	if raw, ok := members["interaction"]; ok {
+		if err := json.Unmarshal(raw, &out.Interaction); err != nil {
+			return err
+		}
+	}
+	*d = out
+	return nil
+}
+
 // InteractionPrefs configures input (keyboard / mouse).
 type InteractionPrefs struct {
 	Keyboard []string    `json:"keyboard,omitempty"`
 	Mouse    *MousePrefs `json:"mouse,omitempty"`
 }
 
+// UnmarshalJSON matches "keyboard" and "mouse" by exact name. encoding/json would match
+// them case-insensitively, so a schema-valid unknown member such as "Keyboard": [] would be
+// read as an explicit empty list and revoke an inherited key list in the merge. Absent vs
+// present is preserved: a member absent from the update leaves the receiver's field as it
+// was (the same receiver-merge behavior as the rest of PlaylistItem); a present "keyboard"
+// replaces the list, with [] decoding to a non-nil empty slice (revocation, #6) and null to nil.
+func (ip *InteractionPrefs) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil { // JSON null: leave the value untouched, like the default decoder.
+		return nil
+	}
+	if v, ok := raw["keyboard"]; ok {
+		var kb []string
+		if err := json.Unmarshal(v, &kb); err != nil {
+			return err
+		}
+		ip.Keyboard = kb
+	}
+	if v, ok := raw["mouse"]; ok {
+		// Decode into the existing pointer so MousePrefs.UnmarshalJSON can merge flag by flag;
+		// JSON null clears it, as the default decoder would.
+		if err := json.Unmarshal(v, &ip.Mouse); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarshalJSON keeps an empty-but-non-nil Keyboard on the wire as "keyboard": []. omitempty
+// would drop it, and that is how a layer revokes an inherited key list (#6), so a document
+// built or re-encoded through this SDK would lose the revocation before it is signed. Kept
+// as a method, not a *[]string field, so the field type stays source-compatible; nil still
+// means "not stated" and is omitted. Decoding already preserves the distinction.
+func (ip InteractionPrefs) MarshalJSON() ([]byte, error) {
+	type plain struct {
+		Keyboard *[]string   `json:"keyboard,omitempty"`
+		Mouse    *MousePrefs `json:"mouse,omitempty"`
+	}
+	out := plain{Mouse: ip.Mouse}
+	if ip.Keyboard != nil {
+		out.Keyboard = &ip.Keyboard
+	}
+	return json.Marshal(out)
+}
+
 // MousePrefs toggles pointer interactions.
 //
-// These are plain bools, so an explicit false is indistinguishable from an absent key and the
-// merge order cannot express a revocation: see #6, which changes them to pointers. Left as they
-// are here to keep this change to the two spec updates it implements.
+// Each field is a pointer so an explicit false stays distinct from an absent key: the merge
+// order (defaults → manifests → override → item) lets a higher layer revoke an interaction a
+// lower one enabled, which needs the "present and false" state (#6; DP-1 §4 interaction.mouse).
+// nil means the layer says nothing about that pointer interaction.
 type MousePrefs struct {
-	Click  bool `json:"click,omitempty"`
-	Scroll bool `json:"scroll,omitempty"`
-	Drag   bool `json:"drag,omitempty"`
-	Hover  bool `json:"hover,omitempty"`
+	Click  *bool `json:"click,omitempty"`
+	Scroll *bool `json:"scroll,omitempty"`
+	Drag   *bool `json:"drag,omitempty"`
+	Hover  *bool `json:"hover,omitempty"`
+}
+
+// UnmarshalJSON matches the four flag names exactly. encoding/json matches struct tags
+// case-insensitively, so a schema-valid unknown member such as "Click": null would otherwise
+// overwrite (and, being null, clear) the recognized "click" pointer. DP-1 member names are
+// case-sensitive, so unknown-case siblings must be ignored. Absent vs explicit false is
+// preserved: a key is decoded only when present under its exact name.
+func (m *MousePrefs) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil { // JSON null: leave the value untouched, like the default decoder.
+		return nil
+	}
+	// Decode into a copy and assign only on success, so a malformed member leaves the
+	// receiver unchanged. Members absent from the update keep the receiver's value.
+	out := *m
+	for name, dst := range map[string]**bool{
+		"click": &out.Click, "scroll": &out.Scroll, "drag": &out.Drag, "hover": &out.Hover,
+	} {
+		v, ok := raw[name]
+		if !ok {
+			continue
+		}
+		if err := json.Unmarshal(v, dst); err != nil {
+			return err
+		}
+	}
+	*m = out
+	return nil
 }
 
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).

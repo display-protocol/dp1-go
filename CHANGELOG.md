@@ -3,6 +3,30 @@
 Notable changes to the dp1-go SDK. The module is `v0.x`, so minor versions may break source
 compatibility; every break is listed here with the migration.
 
+## Unreleased
+
+### Breaking
+
+- `playlist.MousePrefs` fields (`Click`, `Scroll`, `Drag`, `Hover`) are `*bool`, not `bool`
+  (#6). An explicit `false` is now distinct from an absent key, so an item or manifest can
+  switch off an interaction a lower layer enabled. Migration: write `ptr(true)` where you wrote
+  `true`, and read with a nil check (nil = not stated).
+
+### Changed
+
+- `merge.DisplayForItem` merges interaction settings per key across every layer, including a
+  ref or inline manifest's `interaction` block, which previously replaced the lower layer's
+  `mouse` wholesale. An explicit `"keyboard": []` now clears the inherited key list.
+- `refmanifest.Artist`, `Biography`, `Link`, `Thumbnail` and the `LinkType*` constants are
+  aliases of the `extension/identity` types, so DP-1's one Entity model is one Go type.
+  Existing code compiles unchanged.
+
+### Added
+
+- `merge.DurationForItem` and `merge.LicenseForItem`: the `defaults.duration` /
+  `defaults.license` inheritance of §3.1. Duration resolves item, then `override.duration`, then
+  defaults; license resolves item, then defaults.
+
 ## v0.7.3 — 2026-11-09
 
 Adds the playlists extension's `satellites` field ([display-protocol/dp1#62](https://github.com/display-protocol/dp1/pull/62),

@@ -377,7 +377,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Autoplay: &fal,
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"KeyA"},
-				Mouse:    &playlist.MousePrefs{Click: true},
+				Mouse:    &playlist.MousePrefs{Click: &tru},
 			},
 			UserOverrides: map[string]bool{"scaling": true},
 		},
@@ -407,7 +407,7 @@ func TestDisplayForItem_fullOverlay(t *testing.T) {
 			Scaling: "auto",
 			Interaction: &playlist.InteractionPrefs{
 				Keyboard: []string{"Enter"},
-				Mouse:    &playlist.MousePrefs{Hover: true},
+				Mouse:    &playlist.MousePrefs{Hover: &tru},
 			},
 			UserOverrides: map[string]bool{"margin": true},
 		},
@@ -604,5 +604,248 @@ func TestDisplayForItem_badInlineManifest(t *testing.T) {
 	}
 	if out == nil || out.Scaling != "fill" {
 		t.Fatalf("expected the ref manifest to be applied, got %+v", out)
+	}
+}
+
+// --- revocation and per-key interaction merge (#6) ---
+
+func ptr[T any](v T) *T { return &v }
+
+func TestDisplayForItem_itemRevokesInheritedMouse(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"Space"},
+		Mouse:    &playlist.MousePrefs{Click: ptr(true), Hover: ptr(true)},
+	}}}
+	item := playlist.PlaylistItem{Source: "https://x", Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{},
+		Mouse:    &playlist.MousePrefs{Click: ptr(false)},
+	}}}
+	out, err := DisplayForItem(def, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := out.Interaction.Mouse
+	if m.Click == nil || *m.Click {
+		t.Fatalf("click must be revoked: %v", m.Click)
+	}
+	if m.Hover == nil || !*m.Hover {
+		t.Fatalf("hover is not named by the item and must be kept: %v", m.Hover)
+	}
+	if out.Interaction.Keyboard == nil || len(out.Interaction.Keyboard) != 0 {
+		t.Fatalf("explicit empty keyboard must revoke: %#v", out.Interaction.Keyboard)
+	}
+	// The defaults object must not be mutated by the merge.
+	if !*def.Display.Interaction.Mouse.Click || len(def.Display.Interaction.Keyboard) != 1 {
+		t.Fatal("defaults mutated")
+	}
+}
+
+func TestDisplayForItem_manifestMouseMergesPerKey(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Mouse: &playlist.MousePrefs{Click: ptr(true), Scroll: ptr(true)},
+	}}}
+	ref := &refmanifest.Manifest{Controls: &refmanifest.Controls{Display: &refmanifest.DisplayControls{
+		Interaction: json.RawMessage(`{"mouse":{"scroll":false,"drag":true}}`),
+	}}}
+	out, err := DisplayForItem(def, ref, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := out.Interaction.Mouse
+	if !*m.Click || *m.Scroll || !*m.Drag || m.Hover != nil {
+		t.Fatalf("click=%v scroll=%v drag=%v hover=%v", m.Click, m.Scroll, m.Drag, m.Hover)
+	}
+}
+
+// --- duration and license inheritance (§3.1) ---
+
+func TestDurationForItem(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Duration: ptr(300.0)}
+	cases := []struct {
+		name string
+		def  *playlist.Defaults
+		item playlist.PlaylistItem
+		want *float64
+	}{
+		{"defaults", def, playlist.PlaylistItem{}, ptr(300.0)},
+		{"override beats defaults", def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":180}`)}, ptr(180.0)},
+		{"item beats override", def, playlist.PlaylistItem{Duration: ptr(30.0), Override: json.RawMessage(`{"duration":180}`)}, ptr(30.0)},
+		{"explicit zero is kept", def, playlist.PlaylistItem{Duration: ptr(0.0)}, ptr(0.0)},
+		{"nothing set", nil, playlist.PlaylistItem{}, nil},
+		{"override without duration", def, playlist.PlaylistItem{Override: json.RawMessage(`{"display":{}}`)}, ptr(300.0)},
+	}
+	for _, tc := range cases {
+		got, err := DurationForItem(tc.def, tc.item)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+	if _, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`nope`)}); err == nil {
+		t.Fatal("malformed override must error")
+	}
+}
+
+func TestLicenseForItem(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{License: "open"}
+	if got := LicenseForItem(def, playlist.PlaylistItem{}); got != "open" {
+		t.Fatal(got)
+	}
+	if got := LicenseForItem(def, playlist.PlaylistItem{License: "token"}); got != "token" {
+		t.Fatal(got)
+	}
+	if got := LicenseForItem(nil, playlist.PlaylistItem{}); got != "" {
+		t.Fatal(got)
+	}
+}
+
+func TestDurationForItem_exactKey(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Duration: ptr(300.0)}
+	got, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"Duration":60}`)})
+	if err != nil || got == nil || *got != 300 {
+		t.Fatalf("unknown-only member: got %v err %v", got, err)
+	}
+	got, err = DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":180,"Duration":60}`)})
+	if err != nil || got == nil || *got != 180 {
+		t.Fatalf("collision: got %v err %v", got, err)
+	}
+	if _, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":"x"}`)}); err == nil {
+		t.Fatal("non-numeric duration must error")
+	}
+}
+
+// The mouse collision case through the override and manifest paths.
+func TestDisplayForItem_mouseUnknownCaseKeyIgnored(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{Source: "https://x",
+		Override: json.RawMessage(`{"display":{"interaction":{"mouse":{"click":true,"Click":null}}}}`)}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := out.Interaction.Mouse; m.Click == nil || !*m.Click {
+		t.Fatalf("override path lost click: %+v", m)
+	}
+	ref := &refmanifest.Manifest{Controls: &refmanifest.Controls{Display: &refmanifest.DisplayControls{
+		Interaction: json.RawMessage(`{"mouse":{"click":true,"Click":null}}`),
+	}}}
+	out, err = DisplayForItem(nil, ref, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := out.Interaction.Mouse; m.Click == nil || !*m.Click {
+		t.Fatalf("manifest path lost click: %+v", m)
+	}
+}
+
+// F5: unknown-case PARENT members ("Display", "Interaction") must not be read as the
+// recognized ones, or they revoke inherited controls that the document leaves enabled.
+func TestDisplayForItem_parentUnknownCaseKeysIgnored(t *testing.T) {
+	t.Parallel()
+	tru := true
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"KeyA"},
+		Mouse:    &playlist.MousePrefs{Click: &tru},
+	}}}
+	cases := map[string]string{
+		"item Display":                 `{"source":"https://x","Display":{"interaction":{"keyboard":[],"mouse":{"click":false}}}}`,
+		"item display.Interaction":     `{"source":"https://x","display":{"Interaction":{"keyboard":[],"mouse":{"click":false}}}}`,
+		"override Display":             `{"source":"https://x","override":{"Display":{"interaction":{"keyboard":[],"mouse":{"click":false}}}}}`,
+		"override display.Interaction": `{"source":"https://x","override":{"display":{"Interaction":{"keyboard":[],"mouse":{"click":false}}}}}`,
+	}
+	for name, doc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var item playlist.PlaylistItem
+			if err := json.Unmarshal([]byte(doc), &item); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, nil, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := out.Interaction
+			if len(in.Keyboard) != 1 || in.Mouse == nil || in.Mouse.Click == nil || !*in.Mouse.Click {
+				t.Fatalf("unknown-case parent revoked inherited controls: %+v", in)
+			}
+		})
+	}
+}
+
+// F6: the remaining ancestors — item "Override"/"InlineManifest" and manifest
+// "Controls"/"Display"/"Interaction" — are matched by exact name too.
+func TestDisplayForItem_remainingAncestorsUnknownCaseIgnored(t *testing.T) {
+	t.Parallel()
+	tru := true
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"KeyA"},
+		Mouse:    &playlist.MousePrefs{Click: &tru},
+	}}}
+	const ia = `{"keyboard":[],"mouse":{"click":false}}`
+	items := map[string]string{
+		"item Override":       `{"source":"https://x","Override":{"display":{"interaction":` + ia + `}}}`,
+		"item InlineManifest": `{"source":"https://x","InlineManifest":{"controls":{"display":{"interaction":` + ia + `}}}}`,
+		"inline Controls":     `{"source":"https://x","inlineManifest":{"Controls":{"display":{"interaction":` + ia + `}}}}`,
+		"inline Display":      `{"source":"https://x","inlineManifest":{"controls":{"Display":{"interaction":` + ia + `}}}}`,
+		"inline Interaction":  `{"source":"https://x","inlineManifest":{"controls":{"display":{"Interaction":` + ia + `}}}}`,
+	}
+	check := func(t *testing.T, out *playlist.DisplayPrefs) {
+		t.Helper()
+		in := out.Interaction
+		if in == nil || len(in.Keyboard) != 1 || in.Mouse == nil || in.Mouse.Click == nil || !*in.Mouse.Click {
+			t.Fatalf("unknown-case ancestor revoked inherited controls: %+v", in)
+		}
+	}
+	for name, doc := range items {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var item playlist.PlaylistItem
+			if err := json.Unmarshal([]byte(doc), &item); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, nil, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, out)
+		})
+	}
+	refs := map[string]string{
+		"ref Controls":    `{"Controls":{"display":{"interaction":` + ia + `}}}`,
+		"ref Display":     `{"controls":{"Display":{"interaction":` + ia + `}}}`,
+		"ref Interaction": `{"controls":{"display":{"Interaction":` + ia + `}}}`,
+	}
+	for name, doc := range refs {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var m refmanifest.Manifest
+			if err := json.Unmarshal([]byte(doc), &m); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, &m, playlist.PlaylistItem{Source: "https://x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, out)
+		})
+	}
+	// Exact names still apply.
+	var m refmanifest.Manifest
+	if err := json.Unmarshal([]byte(`{"controls":{"display":{"interaction":`+ia+`}}}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	out, err := DisplayForItem(def, &m, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in := out.Interaction; in == nil || len(in.Keyboard) != 0 || *in.Mouse.Click {
+		t.Fatalf("exact-name manifest revocation lost: %+v", in)
 	}
 }

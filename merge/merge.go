@@ -8,11 +8,6 @@
 // This package is not a validation boundary: it overlays whatever manifests it is handed, so
 // values the schema would reject reach the result. item.InlineManifest is schema-checked only
 // when the playlist was parsed with dp1.ParseAndValidatePlaylistWithPlaylistsExtension.
-//
-// Known gap (#6): interaction settings resolve by Go zero value rather than by field presence,
-// so a higher-precedence layer can only switch an interaction on, never off, and a manifest's
-// mouse block replaces the lower layer's wholesale instead of merging key by key. That predates
-// the inlineManifest slot but is easier to reach now that two manifests stack.
 package merge
 
 import (
@@ -45,15 +40,20 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 	applyManifestDisplay(&base, inline)
 	applyManifestDisplay(&base, ref)
 	if len(item.Override) > 0 {
-		var ov struct {
-			Duration *float64               `json:"duration,omitempty"`
-			Display  *playlist.DisplayPrefs `json:"display,omitempty"`
-		}
+		// Exact-key lookup, like DurationForItem: a struct decode would match an unknown
+		// "Display" member case-insensitively and apply it as the recognized display block.
+		var ov map[string]json.RawMessage
 		if err := json.Unmarshal(item.Override, &ov); err != nil {
 			return nil, err
 		}
-		if ov.Display != nil {
-			overlayDisplay(&base, ov.Display)
+		if raw, ok := ov["display"]; ok {
+			var disp *playlist.DisplayPrefs
+			if err := json.Unmarshal(raw, &disp); err != nil {
+				return nil, err
+			}
+			if disp != nil {
+				overlayDisplay(&base, disp)
+			}
 		}
 	}
 	if item.Display != nil {
@@ -63,6 +63,54 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 		return nil, nil
 	}
 	return &base, nil
+}
+
+// DurationForItem resolves an item's duration in seconds: the item's own duration, else
+// override.duration, else defaults.duration (§3.1 inheritance, §3.2 resolution order). Nil
+// when none is set, which leaves the choice to the player.
+//
+// override.duration sits between the item field and the defaults for the same reason
+// override.display does in [DisplayForItem]. A malformed override is an error rather than
+// being skipped, matching DisplayForItem.
+func DurationForItem(def *playlist.Defaults, item playlist.PlaylistItem) (*float64, error) {
+	if item.Duration != nil {
+		v := *item.Duration
+		return &v, nil
+	}
+	if len(item.Override) > 0 {
+		// Exact-key lookup: a struct decode would match an unknown "Duration" member
+		// case-insensitively and let it replace or supply the recognized "duration".
+		var ov map[string]json.RawMessage
+		if err := json.Unmarshal(item.Override, &ov); err != nil {
+			return nil, err
+		}
+		if raw, ok := ov["duration"]; ok {
+			var d *float64
+			if err := json.Unmarshal(raw, &d); err != nil {
+				return nil, err
+			}
+			if d != nil {
+				return d, nil
+			}
+		}
+	}
+	if def != nil && def.Duration != nil {
+		v := *def.Duration
+		return &v, nil
+	}
+	return nil, nil
+}
+
+// LicenseForItem resolves an item's license mode: the item's own value, else the playlist
+// defaults' (§3.1 inheritance rule). Empty when neither sets one.
+func LicenseForItem(def *playlist.Defaults, item playlist.PlaylistItem) string {
+	if item.License != "" {
+		return item.License
+	}
+	if def != nil {
+		return def.License
+	}
+	return ""
 }
 
 // ManifestForItem returns the ref manifest a player should read for an item, applying the
@@ -97,8 +145,15 @@ func cloneDisplay(d *playlist.DisplayPrefs) *playlist.DisplayPrefs {
 	c := *d
 	if d.Interaction != nil {
 		ip := *d.Interaction
+		if d.Interaction.Keyboard != nil {
+			ip.Keyboard = append([]string{}, d.Interaction.Keyboard...)
+		}
 		if d.Interaction.Mouse != nil {
-			mp := *d.Interaction.Mouse
+			mp := playlist.MousePrefs{}
+			overlayBool(&mp.Click, d.Interaction.Mouse.Click)
+			overlayBool(&mp.Scroll, d.Interaction.Mouse.Scroll)
+			overlayBool(&mp.Drag, d.Interaction.Mouse.Drag)
+			overlayBool(&mp.Hover, d.Interaction.Mouse.Hover)
 			ip.Mouse = &mp
 		}
 		c.Interaction = &ip
@@ -134,33 +189,7 @@ func overlayDisplay(dst *playlist.DisplayPrefs, src *playlist.DisplayPrefs) {
 	if src.ImageRendering != "" {
 		dst.ImageRendering = src.ImageRendering
 	}
-	if src.Interaction != nil {
-		if dst.Interaction == nil {
-			dst.Interaction = &playlist.InteractionPrefs{}
-		}
-		if len(src.Interaction.Keyboard) > 0 {
-			dst.Interaction.Keyboard = append([]string(nil), src.Interaction.Keyboard...)
-		}
-		if src.Interaction.Mouse != nil {
-			if dst.Interaction.Mouse == nil {
-				dst.Interaction.Mouse = &playlist.MousePrefs{}
-			}
-			m := dst.Interaction.Mouse
-			sm := src.Interaction.Mouse
-			if sm.Click {
-				m.Click = sm.Click
-			}
-			if sm.Scroll {
-				m.Scroll = sm.Scroll
-			}
-			if sm.Drag {
-				m.Drag = sm.Drag
-			}
-			if sm.Hover {
-				m.Hover = sm.Hover
-			}
-		}
-	}
+	overlayInteraction(dst, src.Interaction)
 	if len(src.UserOverrides) > 0 {
 		if dst.UserOverrides == nil {
 			dst.UserOverrides = make(map[string]bool)
@@ -200,14 +229,45 @@ func applyDisplayJSON(dst *playlist.DisplayPrefs, src *refmanifest.DisplayContro
 			dst.Interaction = &playlist.InteractionPrefs{}
 		}
 		var ip playlist.InteractionPrefs
+		// A manifest whose interaction block does not decode is skipped, as before: the schema
+		// path rejects it, and the merge package is not a validation boundary.
 		if err := json.Unmarshal(src.Interaction, &ip); err == nil {
-			if len(ip.Keyboard) > 0 {
-				dst.Interaction.Keyboard = ip.Keyboard
-			}
-			if ip.Mouse != nil {
-				dst.Interaction.Mouse = ip.Mouse
-			}
+			overlayInteraction(dst, &ip)
 		}
+	}
+}
+
+// overlayInteraction layers one interaction block over dst by field presence, so a higher
+// layer can switch an interaction off as well as on and a layer that names only some keys
+// leaves the rest as the lower layer set them (§4, last write wins per key path). An explicit
+// empty keyboard list ("keyboard": []) is a revocation, hence the nil check rather than len.
+func overlayInteraction(dst *playlist.DisplayPrefs, src *playlist.InteractionPrefs) {
+	if src == nil {
+		return
+	}
+	if dst.Interaction == nil {
+		dst.Interaction = &playlist.InteractionPrefs{}
+	}
+	if src.Keyboard != nil {
+		dst.Interaction.Keyboard = append([]string{}, src.Keyboard...)
+	}
+	if src.Mouse == nil {
+		return
+	}
+	if dst.Interaction.Mouse == nil {
+		dst.Interaction.Mouse = &playlist.MousePrefs{}
+	}
+	m, sm := dst.Interaction.Mouse, src.Mouse
+	overlayBool(&m.Click, sm.Click)
+	overlayBool(&m.Scroll, sm.Scroll)
+	overlayBool(&m.Drag, sm.Drag)
+	overlayBool(&m.Hover, sm.Hover)
+}
+
+func overlayBool(dst **bool, src *bool) {
+	if src != nil {
+		v := *src
+		*dst = &v
 	}
 }
 

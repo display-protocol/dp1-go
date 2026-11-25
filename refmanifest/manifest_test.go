@@ -3,6 +3,8 @@ package refmanifest
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/display-protocol/dp1-go/extension/identity"
 )
 
 func TestManifest_JSONRoundTrip(t *testing.T) {
@@ -51,3 +53,16 @@ func TestManifest_JSONRoundTrip(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+// Artist, Link, Biography and Thumbnail are the identity package's types, not mirrors: a
+// field added to Entity must reach manifests with no second edit.
+func TestEntityModelIsShared(t *testing.T) {
+	e := identity.Entity{Name: "n", Links: []identity.Link{{Type: LinkTypeWebsite, URL: "https://x"}}}
+	a := Artist(e) // identity conversion only because Artist is an alias
+	a.Biographies = []Biography{{Text: "t"}}
+	a.Avatar = &Thumbnail{URI: "u"}
+	a.Links[0].Authors = []Artist{{Name: "x"}}
+	if e.Links[0].Authors[0].Name != "x" {
+		t.Fatal("alias must share storage with identity types")
+	}
+}
