@@ -744,3 +744,37 @@ func TestDisplayForItem_mouseUnknownCaseKeyIgnored(t *testing.T) {
 		t.Fatalf("manifest path lost click: %+v", m)
 	}
 }
+
+// F5: unknown-case PARENT members ("Display", "Interaction") must not be read as the
+// recognized ones, or they revoke inherited controls that the document leaves enabled.
+func TestDisplayForItem_parentUnknownCaseKeysIgnored(t *testing.T) {
+	t.Parallel()
+	tru := true
+	def := &playlist.Defaults{Display: &playlist.DisplayPrefs{Interaction: &playlist.InteractionPrefs{
+		Keyboard: []string{"KeyA"},
+		Mouse:    &playlist.MousePrefs{Click: &tru},
+	}}}
+	cases := map[string]string{
+		"item Display":                 `{"source":"https://x","Display":{"interaction":{"keyboard":[],"mouse":{"click":false}}}}`,
+		"item display.Interaction":     `{"source":"https://x","display":{"Interaction":{"keyboard":[],"mouse":{"click":false}}}}`,
+		"override Display":             `{"source":"https://x","override":{"Display":{"interaction":{"keyboard":[],"mouse":{"click":false}}}}}`,
+		"override display.Interaction": `{"source":"https://x","override":{"display":{"Interaction":{"keyboard":[],"mouse":{"click":false}}}}}`,
+	}
+	for name, doc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var item playlist.PlaylistItem
+			if err := json.Unmarshal([]byte(doc), &item); err != nil {
+				t.Fatal(err)
+			}
+			out, err := DisplayForItem(def, nil, item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := out.Interaction
+			if len(in.Keyboard) != 1 || in.Mouse == nil || in.Mouse.Click == nil || !*in.Mouse.Click {
+				t.Fatalf("unknown-case parent revoked inherited controls: %+v", in)
+			}
+		})
+	}
+}

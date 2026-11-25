@@ -40,15 +40,20 @@ func DisplayForItem(def *playlist.Defaults, ref *refmanifest.Manifest, item play
 	applyManifestDisplay(&base, inline)
 	applyManifestDisplay(&base, ref)
 	if len(item.Override) > 0 {
-		var ov struct {
-			Duration *float64               `json:"duration,omitempty"`
-			Display  *playlist.DisplayPrefs `json:"display,omitempty"`
-		}
+		// Exact-key lookup, like DurationForItem: a struct decode would match an unknown
+		// "Display" member case-insensitively and apply it as the recognized display block.
+		var ov map[string]json.RawMessage
 		if err := json.Unmarshal(item.Override, &ov); err != nil {
 			return nil, err
 		}
-		if ov.Display != nil {
-			overlayDisplay(&base, ov.Display)
+		if raw, ok := ov["display"]; ok {
+			var disp *playlist.DisplayPrefs
+			if err := json.Unmarshal(raw, &disp); err != nil {
+				return nil, err
+			}
+			if disp != nil {
+				overlayDisplay(&base, disp)
+			}
 		}
 	}
 	if item.Display != nil {

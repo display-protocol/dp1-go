@@ -186,6 +186,8 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		item
 		ContentRating  json.RawMessage `json:"contentRating"`
 		ContentReasons json.RawMessage `json:"contentReasons"`
+		// Sink for a case-variant "Display"; the exact "display" member is decoded below.
+		Display json.RawMessage `json:"display"`
 	}{item: item(*it)}
 	if err := json.Unmarshal(data, &shadow); err != nil {
 		return err
@@ -211,6 +213,16 @@ func (it *PlaylistItem) UnmarshalJSON(data []byte) error {
 		// decode above already rejected anything that is not a valid item, so there is nothing
 		// further to take.
 		return nil //nolint:nilerr // shadow decode is authoritative for document-shape errors
+	}
+
+	// "display" gets the same exact-key treatment: an unknown "Display" member must not be
+	// materialized as the item's display controls, where its interaction block could revoke
+	// inherited keyboard or mouse controls. Decoding into the existing pointer keeps the
+	// receiver-merge behavior of the default decoder; null clears it.
+	if raw, ok := members["display"]; ok {
+		if err := json.Unmarshal(raw, &it.Display); err != nil {
+			return err
+		}
 	}
 
 	if raw, ok := members["contentRating"]; ok {
@@ -270,6 +282,35 @@ type DisplayPrefs struct {
 	ImageRendering string            `json:"imageRendering,omitempty"`
 	Interaction    *InteractionPrefs `json:"interaction,omitempty"`
 	UserOverrides  map[string]bool   `json:"userOverrides,omitempty"`
+}
+
+// UnmarshalJSON matches the "interaction" member by exact name, for the same reason
+// InteractionPrefs matches its own members exactly: encoding/json would read a schema-valid
+// unknown "Interaction" member as the recognized one and let it revoke inherited controls.
+// Other fields keep encoding/json's matching; they cannot revoke an interaction. Receiver
+// values are kept for absent members (receiver-merge), and null clears interaction.
+func (d *DisplayPrefs) UnmarshalJSON(data []byte) error {
+	type plain DisplayPrefs // strips this method to avoid recursion
+	shadow := struct {
+		plain
+		// Sink so a case-variant key never reaches the typed field; exact lookup follows.
+		Interaction json.RawMessage `json:"interaction"`
+	}{plain: plain(*d)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	out := DisplayPrefs(shadow.plain)
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	if raw, ok := members["interaction"]; ok {
+		if err := json.Unmarshal(raw, &out.Interaction); err != nil {
+			return err
+		}
+	}
+	*d = out
+	return nil
 }
 
 // InteractionPrefs configures input (keyboard / mouse).
