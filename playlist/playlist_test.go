@@ -822,3 +822,25 @@ func TestInteractionPrefs_emptyKeyboardRoundTrips(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+// An unknown member differing only by case must not clear or replace the recognized flag
+// (encoding/json would otherwise match "Click" to the click field case-insensitively).
+func TestMousePrefs_exactKeysOnly(t *testing.T) {
+	t.Parallel()
+	var m MousePrefs
+	if err := json.Unmarshal([]byte(`{"click":true,"Click":null,"HOVER":true,"drag":false}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Click == nil || !*m.Click {
+		t.Fatalf("click lost: %v", m.Click)
+	}
+	if m.Hover != nil {
+		t.Fatalf("HOVER must be ignored, got %v", *m.Hover)
+	}
+	if m.Drag == nil || *m.Drag {
+		t.Fatalf("explicit false lost: %v", m.Drag)
+	}
+	if err := json.Unmarshal([]byte(`{"click":"x"}`), &m); err == nil {
+		t.Fatal("wrong type must error")
+	}
+}

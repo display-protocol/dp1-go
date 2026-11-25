@@ -704,3 +704,43 @@ func TestLicenseForItem(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestDurationForItem_exactKey(t *testing.T) {
+	t.Parallel()
+	def := &playlist.Defaults{Duration: ptr(300.0)}
+	got, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"Duration":60}`)})
+	if err != nil || got == nil || *got != 300 {
+		t.Fatalf("unknown-only member: got %v err %v", got, err)
+	}
+	got, err = DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":180,"Duration":60}`)})
+	if err != nil || got == nil || *got != 180 {
+		t.Fatalf("collision: got %v err %v", got, err)
+	}
+	if _, err := DurationForItem(def, playlist.PlaylistItem{Override: json.RawMessage(`{"duration":"x"}`)}); err == nil {
+		t.Fatal("non-numeric duration must error")
+	}
+}
+
+// The mouse collision case through the override and manifest paths.
+func TestDisplayForItem_mouseUnknownCaseKeyIgnored(t *testing.T) {
+	t.Parallel()
+	item := playlist.PlaylistItem{Source: "https://x",
+		Override: json.RawMessage(`{"display":{"interaction":{"mouse":{"click":true,"Click":null}}}}`)}
+	out, err := DisplayForItem(nil, nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := out.Interaction.Mouse; m.Click == nil || !*m.Click {
+		t.Fatalf("override path lost click: %+v", m)
+	}
+	ref := &refmanifest.Manifest{Controls: &refmanifest.Controls{Display: &refmanifest.DisplayControls{
+		Interaction: json.RawMessage(`{"mouse":{"click":true,"Click":null}}`),
+	}}}
+	out, err = DisplayForItem(nil, ref, playlist.PlaylistItem{Source: "https://x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := out.Interaction.Mouse; m.Click == nil || !*m.Click {
+		t.Fatalf("manifest path lost click: %+v", m)
+	}
+}

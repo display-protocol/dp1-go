@@ -73,14 +73,20 @@ func DurationForItem(def *playlist.Defaults, item playlist.PlaylistItem) (*float
 		return &v, nil
 	}
 	if len(item.Override) > 0 {
-		var ov struct {
-			Duration *float64 `json:"duration,omitempty"`
-		}
+		// Exact-key lookup: a struct decode would match an unknown "Duration" member
+		// case-insensitively and let it replace or supply the recognized "duration".
+		var ov map[string]json.RawMessage
 		if err := json.Unmarshal(item.Override, &ov); err != nil {
 			return nil, err
 		}
-		if ov.Duration != nil {
-			return ov.Duration, nil
+		if raw, ok := ov["duration"]; ok {
+			var d *float64
+			if err := json.Unmarshal(raw, &d); err != nil {
+				return nil, err
+			}
+			if d != nil {
+				return d, nil
+			}
 		}
 	}
 	if def != nil && def.Duration != nil {

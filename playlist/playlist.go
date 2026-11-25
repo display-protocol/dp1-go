@@ -308,6 +308,35 @@ type MousePrefs struct {
 	Hover  *bool `json:"hover,omitempty"`
 }
 
+// UnmarshalJSON matches the four flag names exactly. encoding/json matches struct tags
+// case-insensitively, so a schema-valid unknown member such as "Click": null would otherwise
+// overwrite (and, being null, clear) the recognized "click" pointer. DP-1 member names are
+// case-sensitive, so unknown-case siblings must be ignored. Absent vs explicit false is
+// preserved: a key is decoded only when present under its exact name.
+func (m *MousePrefs) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil { // JSON null: leave the value untouched, like the default decoder.
+		return nil
+	}
+	var out MousePrefs
+	for name, dst := range map[string]**bool{
+		"click": &out.Click, "scroll": &out.Scroll, "drag": &out.Drag, "hover": &out.Hover,
+	} {
+		v, ok := raw[name]
+		if !ok {
+			continue
+		}
+		if err := json.Unmarshal(v, dst); err != nil {
+			return err
+		}
+	}
+	*m = out
+	return nil
+}
+
 // ReproBlock carries deterministic reproduction hints (DP-1 §5).
 type ReproBlock struct {
 	EngineVersion map[string]string `json:"engineVersion,omitempty"`
