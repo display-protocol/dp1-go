@@ -784,3 +784,24 @@ func TestPlaylistItemUnmarshalMergesIntoReceiver(t *testing.T) {
 		}
 	})
 }
+
+// An explicit false must survive the wire: it is how a document revokes an interaction a
+// lower layer enabled (#6). omitempty on a plain bool would drop it.
+func TestMousePrefs_explicitFalseRoundTrips(t *testing.T) {
+	f, tr := false, true
+	b, err := json.Marshal(DisplayPrefs{Interaction: &InteractionPrefs{Mouse: &MousePrefs{Click: &f, Hover: &tr}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"interaction":{"mouse":{"click":false,"hover":true}}}`; string(b) != want {
+		t.Fatalf("got %s want %s", b, want)
+	}
+	var back DisplayPrefs
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	m := back.Interaction.Mouse
+	if m.Click == nil || *m.Click || m.Scroll != nil || m.Hover == nil || !*m.Hover {
+		t.Fatalf("round trip lost presence: %+v", m)
+	}
+}
