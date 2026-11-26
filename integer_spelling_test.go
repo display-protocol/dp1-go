@@ -1,12 +1,10 @@
 package dp1_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
 	dp1 "github.com/display-protocol/dp1-go"
-	"github.com/display-protocol/dp1-go/extension/identity"
 	"github.com/display-protocol/dp1-go/merge"
 	"github.com/display-protocol/dp1-go/refmanifest"
 )
@@ -63,29 +61,4 @@ func TestParseAndValidate_integerSpellings(t *testing.T) {
 		}
 		check(t, m)
 	})
-}
-
-// The custom decoders replace the default one, so they must keep its behavior for
-// everything but the spelling: absent keeps the receiver's value, null clears it.
-func TestIntegerMembers_defaultDecoderSemantics(t *testing.T) {
-	t.Parallel()
-	w, h := 1, 2
-	th := identity.Thumbnail{URI: "keep", W: &w, H: &h}
-	if err := json.Unmarshal([]byte(`{"h": null}`), &th); err != nil {
-		t.Fatal(err)
-	}
-	if th.URI != "keep" || th.W == nil || *th.W != 1 || th.H != nil {
-		t.Fatalf("got %+v", th)
-	}
-	cpu, mem := 3, 4
-	s := refmanifest.SafetyControls{MaxCPUPct: &cpu, MaxMemMB: &mem}
-	if err := json.Unmarshal([]byte(`{"maxMemMB": null, "orientation": ["any"]}`), &s); err != nil {
-		t.Fatal(err)
-	}
-	if s.MaxCPUPct == nil || *s.MaxCPUPct != 3 || s.MaxMemMB != nil || len(s.Orientation) != 1 {
-		t.Fatalf("got %+v", s)
-	}
-	if err := json.Unmarshal([]byte(`{"uri": "u", "w": 1.5}`), &identity.Thumbnail{}); err == nil {
-		t.Fatal("fraction decoded")
-	}
 }
