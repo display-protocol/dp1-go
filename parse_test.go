@@ -493,8 +493,8 @@ func TestParseAndValidatePlaylistWithPlaylistsExtension_satelliteUnknownProperty
 // sees a value the schema has already let through — validation runs before decode. A
 // schema edit that dropped either constraint would leave every one of those tests green.
 //
-// It uses dummySignatureJSON rather than signing: a raw document is the only way to put
-// an integer seriesId on the wire, since SeriesID always marshals as a string.
+// It uses dummySignatureJSON rather than signing: a raw document is the way to choose
+// the wire form, since SeriesID's marshaled form is decided by the value.
 func TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema(t *testing.T) {
 	t.Parallel()
 	// 2^256-1, well past float64's exact range — the reason the string form exists.
@@ -537,8 +537,8 @@ func TestParseAndValidatePlaylist_imageRenderingAndSeriesIDThroughSchema(t *test
 			if got == nil || *got != tc.want {
 				t.Fatalf("seriesId: got %v want %q", got, tc.want)
 			}
-			// Re-marshaling normalizes the integer form to a string; the schema's oneOf
-			// accepts both, so the document this SDK emits must still validate.
+			// Re-marshaling picks the wire form from the value (core §6); the document
+			// this SDK emits must still validate.
 			round, err := json.Marshal(out)
 			if err != nil {
 				t.Fatal(err)

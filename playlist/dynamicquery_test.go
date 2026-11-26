@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,16 +41,46 @@ func TestDynamicQueryContentRatingValidation(t *testing.T) {
 			ItemSchema: "dp1/1.1",
 		},
 	}
-	items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":"general","contentReasons":["curator advisory"]}]}`), dq)
+	items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":"general","contentReasons":["curator advisory"]}]}`), dq, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 || items[0].ContentRating == nil || string(*items[0].ContentRating) != "general" {
 		t.Fatalf("items: %+v", items)
 	}
-	_, err = playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":null}]}`), dq)
-	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-		t.Fatalf("expected invalid item, got %v", err)
+	opts, discarded := recordDiscards()
+	items, err = playlistItemsFromDynamicQueryBody([]byte(`{"items":[{"source":"https://a","contentRating":null}]}`), dq, opts)
+	if err != nil || len(items) != 0 || len(*discarded) != 1 || !errors.Is((*discarded)[0], ErrDynamicQueryItemInvalid) {
+		t.Fatalf("expected one discarded item, got items %+v err %v reported %v", items, err, *discarded)
+	}
+}
+
+// recordDiscards returns insecure options that collect the reported item errors.
+func recordDiscards() (*DynamicQueryFetchOptions, *[]error) {
+	var errs []error
+	return &DynamicQueryFetchOptions{
+		AllowInsecureHTTP: true,
+		OnInvalidItem:     func(_ int, err error) { errs = append(errs, err) },
+	}, &errs
+}
+
+// assertDiscarded checks that the call succeeded, kept only the static items, and reported
+// exactly one discarded item wrapping every target.
+func assertDiscarded(t *testing.T, out *Playlist, err error, discarded []error, targets ...error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("want the static item only, got %+v", out.Items)
+	}
+	if len(discarded) == 0 {
+		t.Fatal("nothing reported")
+	}
+	for _, target := range append(targets, ErrDynamicQueryItemInvalid) {
+		if !errors.Is(discarded[0], target) {
+			t.Fatalf("want %v, got %v", target, discarded[0])
+		}
 	}
 }
 
@@ -387,13 +418,9 @@ func TestResolveDynamicQuery_invalidDisplayAtFailsValidation(t *testing.T) {
 					},
 				},
 			}
-			_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-			if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-				t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
-			}
-			if !errors.Is(err, validate.ErrValidation) {
-				t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
-			}
+			opts, discarded := recordDiscards()
+			out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+			assertDiscarded(t, out, err, *discarded, validate.ErrValidation)
 		})
 	}
 }
@@ -503,13 +530,9 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
-		}
-		if !errors.Is(err, validate.ErrValidation) {
-			t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
-		}
+		opts, discarded := recordDiscards()
+		out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+		assertDiscarded(t, out, err, *discarded, validate.ErrValidation)
 	})
 
 	t.Run("invalid_source_uri", func(t *testing.T) {
@@ -532,13 +555,9 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
-		}
-		if !errors.Is(err, validate.ErrValidation) {
-			t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
-		}
+		opts, discarded := recordDiscards()
+		out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+		assertDiscarded(t, out, err, *discarded, validate.ErrValidation)
 	})
 
 	t.Run("itemMap_produces_invalid_item", func(t *testing.T) {
@@ -565,13 +584,9 @@ func TestResolveDynamicQuery_invalidPlaylistItem(t *testing.T) {
 				},
 			},
 		}
-		_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-			t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
-		}
-		if !errors.Is(err, validate.ErrValidation) {
-			t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
-		}
+		opts, discarded := recordDiscards()
+		out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+		assertDiscarded(t, out, err, *discarded, validate.ErrValidation)
 	})
 }
 
@@ -967,10 +982,9 @@ func TestResolveDynamicQuery_itemMapNonObjectElement(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-		t.Fatalf("got %v", err)
-	}
+	opts, discarded := recordDiscards()
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+	assertDiscarded(t, out, err, *discarded)
 }
 
 func TestResolveDynamicQuery_jsonUnmarshalItemFails(t *testing.T) {
@@ -995,10 +1009,9 @@ func TestResolveDynamicQuery_jsonUnmarshalItemFails(t *testing.T) {
 			},
 		},
 	}
-	_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-	if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-		t.Fatalf("got %v", err)
-	}
+	opts, discarded := recordDiscards()
+	out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+	assertDiscarded(t, out, err, *discarded)
 }
 
 func TestResolveDynamicQuery_clonePlaylistBranches(t *testing.T) {
@@ -1358,13 +1371,9 @@ func TestResolveDynamicQuery_malformedInlineManifestFailsValidation(t *testing.T
 					},
 				},
 			}
-			_, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), testDynamicQueryInsecure)
-			if !errors.Is(err, ErrDynamicQueryItemInvalid) {
-				t.Fatalf("want ErrDynamicQueryItemInvalid, got %v", err)
-			}
-			if !errors.Is(err, validate.ErrValidation) {
-				t.Fatalf("want wrapped validate.ErrValidation, got %v", err)
-			}
+			opts, discarded := recordDiscards()
+			out, err := p.ResolveDynamicQuery(context.Background(), nil, srv.Client(), opts)
+			assertDiscarded(t, out, err, *discarded, validate.ErrValidation)
 		})
 	}
 }
@@ -1391,7 +1400,7 @@ func TestDynamicQueryContentRatingIgnoresCaseVariantMembers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[`+tc.item+`]}`), dq)
+			items, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[`+tc.item+`]}`), dq, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1406,5 +1415,80 @@ func TestDynamicQueryContentRatingIgnoresCaseVariantMembers(t *testing.T) {
 				t.Fatalf("want %q, got %v", tc.want, got)
 			}
 		})
+	}
+}
+
+// Playlists extension §4.6.2: one bad item costs only itself. Covers all three discard
+// sites' shared path, response order, the reported index and the all-invalid case.
+func TestDynamicQueryDiscardsInvalidItems(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+			ItemMap:    map[string]string{"source": "url"},
+		},
+	}
+	var indexes []int
+	opts := &DynamicQueryFetchOptions{OnInvalidItem: func(i int, err error) {
+		if !errors.Is(err, ErrDynamicQueryItemInvalid) {
+			t.Errorf("item %d: %v", i, err)
+		}
+		indexes = append(indexes, i)
+	}}
+	body := `{"items":[{"url":"https://a"},7,null,{"url":"not a uri"},{"url":"https://b"}]}`
+	items, err := playlistItemsFromDynamicQueryBody([]byte(body), dq, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Source != "https://a" || items[1].Source != "https://b" {
+		t.Fatalf("items: %+v", items)
+	}
+	if fmt.Sprint(indexes) != "[1 2 3]" {
+		t.Fatalf("reported %v", indexes)
+	}
+	// nil options log instead; an all-invalid response is an empty list, not an error.
+	items, err = playlistItemsFromDynamicQueryBody([]byte(`{"items":[7]}`), dq, nil)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("items %+v err %v", items, err)
+	}
+}
+
+// A number float64 cannot hold is one item's problem, not the response's, whether it sits
+// in a mapped member, a nested one, or outside the items altogether. Trailing data after
+// the response is still bad JSON, and numbers reach the item as written.
+func TestDynamicQueryNumberLiterals(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	var indexes []int
+	opts := &DynamicQueryFetchOptions{OnInvalidItem: func(i int, _ error) { indexes = append(indexes, i) }}
+	body := `{"total":1e309,"items":[{"source":"https://a"},{"source":1e309},` +
+		`{"source":"https://x","duration":1e309},{"source":"https://b","override":{"n":9007199254740993}}]}`
+	items, err := playlistItemsFromDynamicQueryBody([]byte(body), dq, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Source != "https://a" || items[1].Source != "https://b" {
+		t.Fatalf("items: %+v", items)
+	}
+	if fmt.Sprint(indexes) != "[1 2]" {
+		t.Fatalf("reported %v", indexes)
+	}
+	if got := string(items[1].Override); got != `{"n":9007199254740993}` {
+		t.Fatalf("override rounded: %s", got)
+	}
+
+	for _, trailing := range []string{`{}`, `]`, `x`, `,`} {
+		_, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[]}`+trailing), dq, nil)
+		if !errors.Is(err, ErrDynamicQueryResponse) {
+			t.Errorf("trailing %q: %v", trailing, err)
+		}
 	}
 }

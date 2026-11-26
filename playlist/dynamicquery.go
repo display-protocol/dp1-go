@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"maps"
 	"net"
 	"net/http"
@@ -41,21 +42,38 @@ var (
 	ErrDynamicQueryHTTP = errors.New("dynamicQuery: http")
 	// ErrDynamicQueryResponse is returned when the indexer response is not usable (path, shape, GraphQL errors).
 	ErrDynamicQueryResponse = errors.New("dynamicQuery: response")
-	// ErrDynamicQueryItemInvalid is returned when a mapped item fails schema validation or decode.
+	// ErrDynamicQueryItemInvalid wraps the error reported for a response item that fails
+	// itemMap, schema validation or decode. The item is discarded, not returned as the call's
+	// error; see [DynamicQueryFetchOptions.OnInvalidItem].
 	ErrDynamicQueryItemInvalid = errors.New("dynamicQuery: invalid playlist item")
 	// ErrDynamicQueryEndpointPolicy is returned when the outbound URL fails security policy
 	// (scheme, userinfo, fragment, or SSRF checks). See [DynamicQueryFetchOptions].
 	ErrDynamicQueryEndpointPolicy = errors.New("dynamicQuery: endpoint policy")
 )
 
-// DynamicQueryFetchOptions configures outbound dynamicQuery HTTP behavior.
-// A nil pointer is treated as the zero value (secure defaults).
+// DynamicQueryFetchOptions configures dynamicQuery resolution: the outbound HTTP policy and
+// the reporting of discarded items. A nil pointer is treated as the zero value (secure
+// defaults, discarded items logged).
 type DynamicQueryFetchOptions struct {
 	// AllowInsecureHTTP, if true, permits http:// URLs and skips SSRF checks against
 	// loopback, private, and link-local addresses (for example httptest servers).
 	// When false (default), only https:// is allowed and the endpoint host must resolve
 	// only to publicly routable addresses.
 	AllowInsecureHTTP bool
+	// OnInvalidItem is called once for each response item that is discarded, with its index
+	// in the array at itemsPath and an error wrapping [ErrDynamicQueryItemInvalid]. It runs
+	// synchronously, in response order. When nil, each discarded item is written to the
+	// standard logger: a discard is never silent. A caller that wants to reject the whole
+	// response records the errors here and does so after the call returns.
+	OnInvalidItem func(index int, err error)
+}
+
+func (o *DynamicQueryFetchOptions) reportInvalidItem(index int, err error) {
+	if o != nil && o.OnInvalidItem != nil {
+		o.OnInvalidItem(index, err)
+		return
+	}
+	log.Printf("dp1: discarded dynamicQuery item %d: %v", index, err)
 }
 
 var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
@@ -67,8 +85,9 @@ var placeholderRE = regexp.MustCompile(`\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}`)
 // If p.DynamicQuery is nil, returns a clone of p with no network I/O. If p is nil, returns an
 // error wrapping [ErrDynamicQueryRequest].
 //
-// Hydration rules, HTTP behavior, and errors are the same as [PlaylistItemsFromDynamicQuery]
-// with dq set to p.DynamicQuery.
+// Hydration rules, HTTP behavior, item discarding and errors are the same as
+// [PlaylistItemsFromDynamicQuery] with dq set to p.DynamicQuery. When every response item is
+// discarded the static items are still returned, without error.
 //
 // opts may be nil for default endpoint policy ([DynamicQueryFetchOptions] zero value).
 func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationParams, client *http.Client, opts *DynamicQueryFetchOptions) (*Playlist, error) {
@@ -100,6 +119,12 @@ func (p *Playlist) ResolveDynamicQuery(ctx context.Context, params HydrationPara
 // and returns the decoded [PlaylistItem] slice. [Playlist.ResolveDynamicQuery] uses this when
 // p.DynamicQuery is non-nil.
 //
+// An item that fails itemMap, validation or decode is discarded and reported through
+// [DynamicQueryFetchOptions.OnInvalidItem]; the valid items are returned in response order
+// (playlists extension §4.6.2, "discard invalid items, show valid items only"). The result may
+// be empty with a nil error. A response that cannot be read as an item list (bad JSON,
+// itemsPath, GraphQL errors) is still an error.
+//
 // dq must be non-nil. ctx is attached to the outgoing request and DNS resolution for SSRF
 // checks. client may be nil to use [http.DefaultClient]. opts may be nil for default
 // endpoint policy ([DynamicQueryFetchOptions] zero value).
@@ -118,7 +143,7 @@ func PlaylistItemsFromDynamicQuery(ctx context.Context, dq *playlists.DynamicQue
 	if err != nil {
 		return nil, err
 	}
-	return playlistItemsFromDynamicQueryBody(body, dq)
+	return playlistItemsFromDynamicQueryBody(body, dq, opts)
 }
 
 func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQuery, params HydrationParams, client *http.Client, opts *DynamicQueryFetchOptions) ([]byte, error) {
@@ -151,7 +176,7 @@ func fetchDynamicQueryResponseBody(ctx context.Context, dq *playlists.DynamicQue
 	return body, nil
 }
 
-func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) ([]PlaylistItem, error) {
+func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery, opts *DynamicQueryFetchOptions) ([]PlaylistItem, error) {
 	if dq == nil {
 		return nil, fmt.Errorf("%w: nil dynamicQuery", ErrDynamicQueryRequest)
 	}
@@ -167,21 +192,31 @@ func playlistItemsFromDynamicQueryBody(body []byte, dq *playlists.DynamicQuery) 
 	}
 
 	out := make([]PlaylistItem, 0, len(rawItems))
-	for _, raw := range rawItems {
-		itemJSON, err := applyItemMap(raw, dq.ResponseMapping.ItemMap)
+	for i, raw := range rawItems {
+		it, err := dynamicItem(raw, dq.ResponseMapping.ItemMap)
 		if err != nil {
-			return nil, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
-		}
-		if err := validate.PlaylistItemWithPlaylistsAndContentRatingExtensions(itemJSON); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
-		}
-		var it PlaylistItem
-		if err := json.Unmarshal(itemJSON, &it); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
+			opts.reportInvalidItem(i, err)
+			continue
 		}
 		out = append(out, it)
 	}
 	return out, nil
+}
+
+// dynamicItem maps, validates and decodes one response element.
+func dynamicItem(raw json.RawMessage, itemMap map[string]string) (PlaylistItem, error) {
+	var it PlaylistItem
+	itemJSON, err := applyItemMap(raw, itemMap)
+	if err != nil {
+		return it, fmt.Errorf("%w: itemMap: %w", ErrDynamicQueryItemInvalid, err)
+	}
+	if err := validate.PlaylistItemWithPlaylistsAndContentRatingExtensions(itemJSON); err != nil {
+		return it, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
+	}
+	if err := json.Unmarshal(itemJSON, &it); err != nil {
+		return it, fmt.Errorf("%w: %w", ErrDynamicQueryItemInvalid, err)
+	}
+	return it, nil
 }
 
 // HydrateDynamicQueryString replaces {{name}} placeholders using params. If query is empty,
@@ -419,8 +454,20 @@ func graphqlPayload(body []byte) (data json.RawMessage, err error) {
 }
 
 func extractDynamicItems(body []byte, profile string, rm playlists.ResponseMapping) ([]json.RawMessage, error) {
+	// The syntax check is separate from the number decode below. Unmarshal into a RawMessage
+	// rejects malformed and trailing data, which a Decoder alone would let through, without
+	// converting any number.
+	var whole json.RawMessage
+	if err := json.Unmarshal(body, &whole); err != nil {
+		return nil, fmt.Errorf("%w: json: %w", ErrDynamicQueryResponse, err)
+	}
+	// UseNumber keeps every literal as written. Decoding into float64 here would let one
+	// item's overflowing number (1e309) fail the whole response before the per-item boundary
+	// could discard that item, and would round integers above 2^53 on the re-marshal below.
+	dec := json.NewDecoder(bytes.NewReader(whole))
+	dec.UseNumber()
 	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
+	if err := dec.Decode(&root); err != nil {
 		return nil, fmt.Errorf("%w: json: %w", ErrDynamicQueryResponse, err)
 	}
 

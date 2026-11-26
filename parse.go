@@ -90,6 +90,79 @@ func ValidateContentRatingExtension(data []byte) error {
 	return nil
 }
 
+// Members that call for an extension schema in [ParseAndValidatePlaylistByFields]: the
+// properties the playlists extension and content-rating overlays declare. Same lists as
+// dp1-js, so both SDKs hold a document to the same schema. A schema sync that adds a property
+// must add it here.
+var (
+	playlistsExtensionFields = []string{
+		"note", "curators", "summary", "openAt", "coverImage", "dynamicQuery", "links",
+		"visibility", "satellites",
+	}
+	playlistsExtensionItemFields = []string{"note", "displayAt", "inlineManifest"}
+	contentRatingItemFields      = []string{"contentRating", "contentReasons"}
+)
+
+// ParseAndValidatePlaylistByFields lets the document choose the schema: core, the playlists
+// extension, the content-rating extension, or both composed, according to the members it
+// carries. A member counts when present under its exact name, null included; an empty items
+// list also needs the playlists extension, which allows it alongside dynamicQuery.
+//
+// Use it when one reader must accept whatever kind of playlist arrives and checks every
+// extension it finds. A consumer that does not implement an extension should keep calling
+// the parser that names its schema: this one rejects a malformed extension member that
+// [ParseAndValidatePlaylist] tolerates.
+func ParseAndValidatePlaylistByFields(data []byte) (*playlist.Playlist, error) {
+	needsPlaylists, needsRating := playlistExtensionNeeds(data)
+	switch {
+	case needsPlaylists && needsRating:
+		return ParseAndValidatePlaylistWithPlaylistsAndContentRatingExtensions(data)
+	case needsPlaylists:
+		return ParseAndValidatePlaylistWithPlaylistsExtension(data)
+	case needsRating:
+		return ParseAndValidatePlaylistWithContentRatingExtension(data)
+	default:
+		return ParseAndValidatePlaylist(data)
+	}
+}
+
+// playlistExtensionNeeds reads member names through maps, whose keys are literal: a struct
+// decode would fold case and let an unknown "Note" pick a schema. Whatever does not have the
+// expected shape selects nothing, leaving the chosen validator to report it.
+func playlistExtensionNeeds(data []byte) (needsPlaylists, needsRating bool) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(data, &top) != nil {
+		return false, false
+	}
+	needsPlaylists = hasAny(top, playlistsExtensionFields)
+	var items []json.RawMessage
+	if json.Unmarshal(top["items"], &items) != nil {
+		return needsPlaylists, false
+	}
+	// non-nil: "items": [] is an empty list, "items": null is not one.
+	if items != nil && len(items) == 0 {
+		needsPlaylists = true
+	}
+	for _, raw := range items {
+		var item map[string]json.RawMessage
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		needsPlaylists = needsPlaylists || hasAny(item, playlistsExtensionItemFields)
+		needsRating = needsRating || hasAny(item, contentRatingItemFields)
+	}
+	return needsPlaylists, needsRating
+}
+
+func hasAny(members map[string]json.RawMessage, names []string) bool {
+	for _, name := range names {
+		if _, ok := members[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseAndValidatePlaylist validates against the core playlist schema and decodes into playlist.Playlist.
 //
 // Only core fields are guaranteed schema-valid: the core schema describes no registry-extension

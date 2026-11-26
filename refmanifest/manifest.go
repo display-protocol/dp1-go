@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/display-protocol/dp1-go/extension/identity"
+	"github.com/display-protocol/dp1-go/internal/jsonint"
 )
 
 // Manifest is the ref manifest root (DP-1 ref-manifest schema).
@@ -90,7 +91,6 @@ type (
 	// Link is an external link (profile or editorial); see identity.Link.
 	Link = identity.Link
 	// Thumbnail references a preview image; only URI is required (core changelog 2026-08-12).
-	// The schema accepts integer spellings Go does not ("w": 1e2); that gap is tracked in #7.
 	Thumbnail = identity.Thumbnail
 )
 
@@ -182,6 +182,22 @@ type SafetyControls struct {
 	Orientation []string `json:"orientation,omitempty"`
 	MaxCPUPct   *int     `json:"maxCpuPct,omitempty"`
 	MaxMemMB    *int     `json:"maxMemMB,omitempty"`
+}
+
+// UnmarshalJSON accepts every spelling of maxCpuPct and maxMemMB the schema's integer
+// accepts; see [identity.Thumbnail.UnmarshalJSON], including the note on embedding.
+func (s *SafetyControls) UnmarshalJSON(data []byte) error {
+	type plain SafetyControls
+	shadow := struct {
+		*plain
+		MaxCPUPct *jsonint.Int `json:"maxCpuPct,omitempty"`
+		MaxMemMB  *jsonint.Int `json:"maxMemMB,omitempty"`
+	}{plain: (*plain)(s), MaxCPUPct: (*jsonint.Int)(s.MaxCPUPct), MaxMemMB: (*jsonint.Int)(s.MaxMemMB)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	s.MaxCPUPct, s.MaxMemMB = (*int)(shadow.MaxCPUPct), (*int)(shadow.MaxMemMB)
+	return nil
 }
 
 // LocalizedMetadata holds translated strings for one locale key.
