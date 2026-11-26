@@ -19,6 +19,8 @@ compatibility; every break is listed here with the migration.
   reported to the new `DynamicQueryFetchOptions.OnInvalidItem`, or logged when that is nil.
   Migration: a caller that relied on `ErrDynamicQueryItemInvalid` being returned records it in the
   callback. `DynamicQueryFetchOptions` is no longer comparable with `==`.
+  A number too large for float64 (`1e309`) now discards only its own item, and numbers in items
+  keep their original spelling instead of being rounded through float64.
 
 ### Added
 

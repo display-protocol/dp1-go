@@ -1454,3 +1454,41 @@ func TestDynamicQueryDiscardsInvalidItems(t *testing.T) {
 		t.Fatalf("items %+v err %v", items, err)
 	}
 }
+
+// A number float64 cannot hold is one item's problem, not the response's, whether it sits
+// in a mapped member, a nested one, or outside the items altogether. Trailing data after
+// the response is still bad JSON, and numbers reach the item as written.
+func TestDynamicQueryNumberLiterals(t *testing.T) {
+	t.Parallel()
+	dq := &playlists.DynamicQuery{
+		Profile: ProfileHTTPSJSONV1,
+		ResponseMapping: playlists.ResponseMapping{
+			ItemsPath:  "items",
+			ItemSchema: "dp1/1.1",
+		},
+	}
+	var indexes []int
+	opts := &DynamicQueryFetchOptions{OnInvalidItem: func(i int, _ error) { indexes = append(indexes, i) }}
+	body := `{"total":1e309,"items":[{"source":"https://a"},{"source":1e309},` +
+		`{"source":"https://x","duration":1e309},{"source":"https://b","override":{"n":9007199254740993}}]}`
+	items, err := playlistItemsFromDynamicQueryBody([]byte(body), dq, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Source != "https://a" || items[1].Source != "https://b" {
+		t.Fatalf("items: %+v", items)
+	}
+	if fmt.Sprint(indexes) != "[1 2]" {
+		t.Fatalf("reported %v", indexes)
+	}
+	if got := string(items[1].Override); got != `{"n":9007199254740993}` {
+		t.Fatalf("override rounded: %s", got)
+	}
+
+	for _, trailing := range []string{`{}`, `]`, `x`, `,`} {
+		_, err := playlistItemsFromDynamicQueryBody([]byte(`{"items":[]}`+trailing), dq, nil)
+		if !errors.Is(err, ErrDynamicQueryResponse) {
+			t.Errorf("trailing %q: %v", trailing, err)
+		}
+	}
+}

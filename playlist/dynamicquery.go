@@ -454,8 +454,20 @@ func graphqlPayload(body []byte) (data json.RawMessage, err error) {
 }
 
 func extractDynamicItems(body []byte, profile string, rm playlists.ResponseMapping) ([]json.RawMessage, error) {
+	// The syntax check is separate from the number decode below. Unmarshal into a RawMessage
+	// rejects malformed and trailing data, which a Decoder alone would let through, without
+	// converting any number.
+	var whole json.RawMessage
+	if err := json.Unmarshal(body, &whole); err != nil {
+		return nil, fmt.Errorf("%w: json: %w", ErrDynamicQueryResponse, err)
+	}
+	// UseNumber keeps every literal as written. Decoding into float64 here would let one
+	// item's overflowing number (1e309) fail the whole response before the per-item boundary
+	// could discard that item, and would round integers above 2^53 on the re-marshal below.
+	dec := json.NewDecoder(bytes.NewReader(whole))
+	dec.UseNumber()
 	var root any
-	if err := json.Unmarshal(body, &root); err != nil {
+	if err := dec.Decode(&root); err != nil {
 		return nil, fmt.Errorf("%w: json: %w", ErrDynamicQueryResponse, err)
 	}
 
