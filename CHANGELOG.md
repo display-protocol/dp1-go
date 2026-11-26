@@ -14,6 +14,17 @@ compatibility; every break is listed here with the migration.
   already signed documents still verify, because verification reads their raw bytes. Do not
   re-marshal a received document and expect its signatures to hold.
 
+- **dynamicQuery:** an invalid response item no longer fails the whole resolution. It is discarded,
+  the valid items are returned (playlists extension §4.6.2), and no error comes back for it. It is
+  reported to the new `DynamicQueryFetchOptions.OnInvalidItem`, or logged when that is nil.
+  Migration: a caller that relied on `ErrDynamicQueryItemInvalid` being returned records it in the
+  callback. `DynamicQueryFetchOptions` is no longer comparable with `==`.
+
+### Added
+
+- `ParseAndValidatePlaylistByFields` validates a playlist against the schema its members call for,
+  as dp1-js does. The existing parsers are unchanged.
+
 ### Fixed
 
 - Schema `integer` members decode from every spelling the schema accepts (`100.0`, `1e3`):
