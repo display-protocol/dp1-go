@@ -1,6 +1,12 @@
 // Package identity holds shared types used by multiple DP-1 registry extensions.
 package identity
 
+import (
+	"encoding/json"
+
+	"github.com/display-protocol/dp1-go/internal/jsonint"
+)
+
 // Entity is a person or organization named by a DP-1 document: an artist credited on a
 // work, a curator or partner of a playlist or channel, a channel publisher, or the author
 // of a note. One model for every place DP-1 names someone (core ref-manifest schema
@@ -35,6 +41,25 @@ type Thumbnail struct {
 	W      *int   `json:"w,omitempty"`
 	H      *int   `json:"h,omitempty"`
 	SHA256 string `json:"sha256,omitempty"`
+}
+
+// UnmarshalJSON accepts every spelling of w and h the schema's integer accepts (100,
+// 100.0, 1e2). Absent, null and unrelated members behave as with the default decoder.
+//
+// Embedding Thumbnail anonymously in another struct promotes this method and would skip
+// the outer struct's own fields; use a named field instead.
+func (t *Thumbnail) UnmarshalJSON(data []byte) error {
+	type plain Thumbnail // strips this method to avoid recursion
+	shadow := struct {
+		*plain
+		W *jsonint.Int `json:"w,omitempty"`
+		H *jsonint.Int `json:"h,omitempty"`
+	}{plain: (*plain)(t), W: (*jsonint.Int)(t.W), H: (*jsonint.Int)(t.H)}
+	if err := json.Unmarshal(data, &shadow); err != nil {
+		return err
+	}
+	t.W, t.H = (*int)(shadow.W), (*int)(shadow.H)
+	return nil
 }
 
 // Biography is one biographical text with optional attribution. An Entity may carry

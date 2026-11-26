@@ -69,9 +69,8 @@ func TestPlaylist_JSONRoundTrip(t *testing.T) {
 
 // TestSeriesID_AcceptsIntOrDecimalString locks in the schema's oneOf [integer, string]
 // for provenance.contract.seriesId: small ids are commonly sent as a JSON number, large
-// ones (beyond float64's exact range) as a decimal string — both must decode, and the
-// type always re-marshals as a string (schema-valid either way, and never risks the
-// precision loss a round-tripped large integer would).
+// ones (beyond float64's exact range) as a decimal string — both must decode, and each
+// of these spellings is the one core §6 prescribes, so it round-trips unchanged.
 func TestSeriesID_AcceptsIntOrDecimalString(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -97,7 +96,7 @@ func TestSeriesID_AcceptsIntOrDecimalString(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(b) != `"`+string(tc.want)+`"` {
+			if string(b) != tc.json {
 				t.Fatalf("marshal: got %s", b)
 			}
 		})
@@ -889,5 +888,31 @@ func TestInteractionPrefs_partialUpdateKeepsReceiver(t *testing.T) {
 	}
 	if len(ip.Keyboard) != 1 {
 		t.Fatalf("keyboard lost: %v", ip.Keyboard)
+	}
+}
+
+// core §6: an integer when it fits in a JSON number exactly, otherwise a decimal string.
+func TestSeriesID_MarshalsIntegerWhenExact(t *testing.T) {
+	t.Parallel()
+	cases := map[SeriesID]string{
+		"0":                    `0`,
+		"777":                  `777`,
+		"9007199254740991":     `9007199254740991`,
+		"9007199254740992":     `"9007199254740992"`,
+		"18446744073709551616": `"18446744073709551616"`,
+		"007":                  `"007"`,
+		"00":                   `"00"`,
+		"":                     `""`,
+		"abc":                  `"abc"`,
+		"-1":                   `"-1"`,
+	}
+	for in, want := range cases {
+		got, err := json.Marshal(ProvenanceContract{SeriesID: &in})
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if string(got) != `{"seriesId":`+want+`}` {
+			t.Errorf("%q: got %s want %s", in, got, want)
+		}
 	}
 }

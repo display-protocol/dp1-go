@@ -470,8 +470,12 @@ type ProvenanceContract struct {
 // series with small values, or a decimal string when the identifier is too large for a
 // JSON number to hold exactly (the same reason TokenID is a plain string) — the schema's
 // seriesId is `oneOf [integer, string]`. Unmarshal accepts either wire shape; Marshal
-// always re-emits a string, which satisfies that oneOf either way and never risks the
-// float64 precision loss a round-tripped large integer would.
+// follows core §6 and writes an integer when the value fits in a JSON number exactly,
+// otherwise a decimal string.
+//
+// The wire shape is therefore chosen by the value, not remembered from the input: a
+// document that spelled a small id as a string re-marshals with a number. Signatures
+// cover the original bytes, so verify and forward those, not a re-marshaled struct.
 type SeriesID string
 
 func (s *SeriesID) UnmarshalJSON(b []byte) error {
@@ -670,8 +674,22 @@ func seriesIDMantissaIsZero(mantissa string) bool {
 	return true
 }
 
+// maxExactSeriesID is 2^53-1, the largest integer every JSON consumer holding numbers as
+// float64 reads back exactly, and tells apart from its neighbors.
+const maxExactSeriesID = 1<<53 - 1
+
+// MarshalJSON writes a number only for the canonical digits of a value up to 2^53-1.
+// Everything else stays a string: larger ids; "007", which the schema accepts as a string
+// and which would be a different identifier as 7; and a hand-built non-digit value, left
+// for validation to refuse rather than emitted as broken JSON.
 func (s SeriesID) MarshalJSON() ([]byte, error) {
-	return json.Marshal(string(s))
+	v := string(s)
+	if seriesIDDigits(v) && (v == "0" || v[0] != '0') {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n <= maxExactSeriesID {
+			return []byte(v), nil
+		}
+	}
+	return json.Marshal(v)
 }
 
 // ProvenanceDep is documentary only; players must not fetch at runtime.

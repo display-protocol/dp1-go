@@ -5,6 +5,24 @@ compatibility; every break is listed here with the migration.
 
 ## Unreleased
 
+### Changed
+
+- **Wire bytes:** `playlist.SeriesID` marshals as a JSON integer when its value is at most
+  2^53−1 (core §6), and as a decimal string only above that or when the digits have a leading
+  zero. It used to be a string always. Payload hashes and signatures of documents newly built
+  from the Go types therefore differ from what earlier versions produced for the same value;
+  already signed documents still verify, because verification reads their raw bytes. Do not
+  re-marshal a received document and expect its signatures to hold.
+
+### Fixed
+
+- Schema `integer` members decode from every spelling the schema accepts (`100.0`, `1e3`):
+  `identity.Thumbnail.W`/`.H` and `refmanifest.SafetyControls.MaxCPUPct`/`.MaxMemMB` (#7). Field
+  types are unchanged; fractions and values outside `int` are still rejected. Both types gain an
+  `UnmarshalJSON` method, so a struct that embeds one anonymously would have it promoted.
+
+## v0.8.0 — 2026-11-25
+
 ### Breaking
 
 - `playlist.MousePrefs` fields (`Click`, `Scroll`, `Drag`, `Hover`) are `*bool`, not `bool`
